@@ -35,7 +35,7 @@ async def webhook(request: Request):
 # เมื่อมีคนพิมพ์ข้อความเข้ามา ให้บอทตอบกลับเบื้องต้นไปก่อน
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
-    reply_text = f"คุณพิมพ์มาว่า: {event.message.text}\n(ระบบ ฉลากฉลาด กำลังทดสอบระบบอยู่ เตรียมตัวพบกับของดีได้เลย)
+    reply_text = f"คุณพิมพ์มาว่า: {event.message.text}\n(ระบบ ฉลากฉลาด กำลังทดสอบระบบอยู่ เตรียมตัวพบกับของดีได้เลย)"
     line_bot_api.reply_message(
         event.reply_token,
         TextSendMessage(text=reply_text)
