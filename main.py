@@ -2,6 +2,7 @@ from fastapi import FastAPI, Request, HTTPException
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
+from linebot.models import MessageEvent, TextMessage, TextSendMessage, ImageMessage
 import os
 
 app = FastAPI()
@@ -36,6 +37,29 @@ async def webhook(request: Request):
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     reply_text = f"คุณพิมพ์มาว่า: {event.message.text}\n(ระบบ ฉลากฉลาด กำลังทดสอบระบบอยู่ เตรียมตัวพบกับของดีได้เลย)"
+    line_bot_api.reply_message(
+        event.reply_token,
+        TextSendMessage(text=reply_text)
+    )
+
+# โค้ดส่วนนี้จะทำงานเมื่อมีคนส่ง "รูปภาพ" เข้ามา
+@handler.add(MessageEvent, message=ImageMessage)
+def handle_image(event):
+    message_id = event.message.id
+    
+    # 1. ดึงไฟล์รูปภาพจากเซิร์ฟเวอร์ LINE
+    image_content = line_bot_api.get_message_content(message_id)
+    
+    # 2. ตั้งชื่อไฟล์และกำหนดโฟลเดอร์ชั่วคราว (/tmp/ รองรับการเขียนไฟล์บน Render)
+    file_path = f"/tmp/{message_id}.jpg"
+    
+    # 3. บันทึกรูปลงเซิร์ฟเวอร์
+    with open(file_path, 'wb') as fd:
+        for chunk in image_content.iter_content():
+            fd.write(chunk)
+            
+    # 4. ตอบกลับผู้ใช้เบื้องต้น
+    reply_text = "ระบบได้รับรูปฉลากยาแล้วครับ กำลังเตรียมปรับความคมชัดภาพ..."
     line_bot_api.reply_message(
         event.reply_token,
         TextSendMessage(text=reply_text)
