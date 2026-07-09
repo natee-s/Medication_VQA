@@ -5,9 +5,8 @@ from linebot.models import MessageEvent, TextMessage, TextSendMessage, ImageMess
 import os
 import cv2
 import numpy as np
-import base64
-import requests
-import json
+from google import genai
+from google.genai import types
 
 # ==========================================
 # 1. ฟังก์ชันผู้เชี่ยวชาญการล้างภาพ (Image Preprocessing)
@@ -43,16 +42,19 @@ def process_pharmacy_label(input_path, output_path):
 
 
 # ==========================================
-# 2. การตั้งค่าเซิร์ฟเวอร์, LINE Bot และ OpenRouter
+# 2. การตั้งค่าเซิร์ฟเวอร์, LINE Bot และ Gemini API
 # ==========================================
 app = FastAPI()
 
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN', 'YOUR_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET', 'YOUR_SECRET')
-OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY', 'YOUR_OPENROUTER_KEY')
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
+
+# ประกาศเรียกใช้งาน Client ของ Gemini ด้วยรหัสคีย์ที่เราฝากไว้บน Render
+ai_client = genai.Client(api_key=GEMINI_API_KEY)
 
 @app.get("/")
 def root():
@@ -78,7 +80,7 @@ async def webhook(request: Request):
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
-    reply_text = f"คุณพิมพ์มาว่า: {event.message.text}\n(ขณะนี้ระบบกำลังทดสอบฟังก์ชันอ่านภาพฉลากยา ลองส่งรูปเข้ามาได้เลยครับ)"
+    reply_text = f"คุณพิมพ์มาว่า: {event.message.text}\n(ขณะนี้ระบบกำลังทดสอบฟังก์ชันอ่านภาพฉลากยาด้วย Gemini 1.5 Flash)"
     line_bot_api.reply_message(
         event.reply_token,
         TextSendMessage(text=reply_text)
@@ -88,7 +90,7 @@ def handle_message(event):
 def handle_image(event):
     message_id = event.message.id
     
-    # 3.1 รับและล้างภาพ
+    # 3.1 รับและล้างภาพด้วย OpenCV
     image_content = line_bot_api.get_message_content(message_id)
     file_path = f"/tmp/{message_id}.jpg"
     processed_path = f"/tmp/processed_{message_id}.jpg"
@@ -99,53 +101,29 @@ def handle_image(event):
             
     width, height = process_pharmacy_label(file_path, processed_path)
     
-    # 3.2 แปลงภาพที่ล้างแล้วเป็น Base64 เพื่อส่งให้ OpenRouter
-    with open(processed_path, "rb") as image_file:
-        encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
-    
-    # 3.3 เตรียมคำสั่ง (Prompt) และเรียกใช้งาน Qwen-VL ผ่าน OpenRouter
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    
-    payload = {
-        "model": "meta-llama/llama-3.2-11b-vision-instruct:free", 
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "นี่คือภาพฉลากยา กรุณาดึงข้อมูลและสรุปออกมาเป็น: 1. ชื่อยา 2. ขนาดยา 3. วิธีรับประทาน 4. คำเตือน (ถ้ามี)"
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{encoded_string}"
-                        }
-                    }
-                ]
-            }
-        ]
-    }
-    
-    # 3.4 ยิงข้อมูลไปให้ AI และรับผลลัพธ์
-    try:
-        response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload)
-        response_json = response.json()
+    # 3.2 อ่านไฟล์ภาพที่ล้างเสร็จแล้วเข้ามาในรูปแบบ Binary เพื่อส่งให้ Gemini
+    with open(processed_path, "rb") as f:
+        image_bytes = f.read()
         
-        # ตรวจสอบว่ามี Error จาก OpenRouter หรือไม่
-        if "error" in response_json:
-            draft_answer = f"⚠️ เกิดข้อผิดพลาดจาก OpenRouter: {response_json['error']['message']}"
-        else:
-            draft_answer = response_json['choices'][0]['message']['content']
-            
+    # 3.3 เรียกใช้งาน Gemini 1.5 Flash (ยิงตรงผ่าน SDK รวดเร็วและเสถียร)
+    try:
+        response = ai_client.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=[
+                types.Part.from_bytes(
+                    data=image_bytes,
+                    mime_type='image/jpeg',
+                ),
+                "นี่คือภาพฉลากยา กรุณาดึงข้อมูลและสรุปออกมาเป็นภาษาไทย: 1. ชื่อยา 2. ขนาดยา 3. วิธีรับประทาน 4. คำเตือน (ถ้ามี)"
+            ]
+        )
+        draft_answer = response.text
+        
     except Exception as e:
-        draft_answer = f"⚠️ ไม่สามารถเชื่อมต่อ AI ได้: {str(e)}"
+        draft_answer = f"⚠️ ไม่สามารถเชื่อมต่อสมอง AI Gemini ได้: {str(e)}"
     
-    # 3.5 ส่งคำตอบ (Draft Answer) กลับไปที่ LINE
-    final_reply = f"✅ ประมวลผลภาพเสร็จสิ้น (Pipeline B)\n\nผลการอ่านจาก Qwen-VL:\n{draft_answer}"
+    # 3.4 ส่งคำตอบกลับไปแสดงผลบนหน้าจอ LINE ของผู้ใช้
+    final_reply = f"✅ ประมวลผลภาพเสร็จสิ้น (Pipeline B - Temporary Mode)\n\nผลการวิเคราะห์จาก Gemini:\n{draft_answer}"
     
     line_bot_api.reply_message(
         event.reply_token,
