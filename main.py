@@ -110,7 +110,7 @@ def handle_image(event):
     }
     
     payload = {
-        "model": "qwen/qwen-vl-plus", 
+        "model": "qwen/qwen2.5-vl-72b-instruct", 
         "messages": [
             {
                 "role": "user",
