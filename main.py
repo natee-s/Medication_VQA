@@ -54,7 +54,7 @@ line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 # ประกาศเรียกใช้งาน Client ของ Gemini ด้วยรหัสคีย์ที่เราฝากไว้บน Render
-ai_client = genai.Client(api_key=GEMINI_API_KEY, http_options={'api_version': 'v1'})
+ai_client = genai.Client(api_key=GEMINI_API_KEY)
 
 @app.get("/")
 def root():
@@ -108,7 +108,7 @@ def handle_image(event):
     # 3.3 เรียกใช้งาน Gemini 1.5 Flash (ยิงตรงผ่าน SDK รวดเร็วและเสถียร)
     try:
         response = ai_client.models.generate_content(
-            model='gemini-1.5-flash',
+            model='gemini-2.5-flash',
             contents=[
                 types.Part.from_bytes(
                     data=image_bytes,
