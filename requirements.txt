@@ -4,4 +4,4 @@ line-bot-sdk==3.5.0
 opencv-python-headless==4.9.0.80
 numpy==1.26.4
 requests==2.31.0
-google-genai==0.1.1
+google-genai
