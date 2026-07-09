@@ -108,7 +108,7 @@ def handle_image(event):
     # 3.3 เรียกใช้งาน Gemini 1.5 Flash (ยิงตรงผ่าน SDK รวดเร็วและเสถียร)
     try:
         response = ai_client.models.generate_content(
-            model='gemini-1.5-flash',
+            model='gemini-1.5-flash-002',
             contents=[
                 types.Part.from_bytes(
                     data=image_bytes,
