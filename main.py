@@ -1,7 +1,14 @@
 from fastapi import FastAPI, Request, HTTPException
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage, TextSendMessage, ImageMessage 
+from linebot.models import (
+    MessageEvent,
+    TextMessage,
+    TextSendMessage,
+    ImageMessage,
+    FlexSendMessage,
+    PostbackEvent,
+)
 import os
 import cv2
 import numpy as np
@@ -9,7 +16,6 @@ from google import genai
 from google.genai import types
 import json
 import requests
-from linebot.models import MessageEvent, ImageMessage, TextSendMessage, FlexSendMessage, PostbackEvent
 
 # ==========================================
 # 1. ฟังก์ชันสร้างฟังก์ชันด่านหน้า (Gatekeeper)
@@ -123,6 +129,9 @@ app = FastAPI()
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN', 'YOUR_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET', 'YOUR_SECRET')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
+
+if not GEMINI_API_KEY:
+    raise RuntimeError("GEMINI_API_KEY is not set")
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
@@ -325,9 +334,9 @@ def handle_image(event):
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"⚠️ ไม่สามารถเชื่อมต่อสมอง AI ได้: {str(e)}"))
 
 @handler.add(PostbackEvent)
-def handle_postback(event):reminder
+def handle_postback(event):
     data = event.postback.data
-    
+
     # ----------------------------------------
     # กรณีที่ 1: ผู้ใช้กดปุ่ม "✅ รับทราบ"
     # ----------------------------------------
@@ -336,7 +345,7 @@ def handle_postback(event):reminder
             event.reply_token,
             TextSendMessage(text="✅ ระบบรับทราบเรียบร้อยครับ คุณสามารถพิมพ์สอบถามข้อมูลเกี่ยวกับยานี้เพิ่มเติมได้เลยครับ หรือหากต้องการให้อ่านฉลากยาตัวอื่น สามารถส่งรูปมาได้เลยครับ")
         )
-        
+
     # ----------------------------------------
     # กรณีที่ 2: ผู้ใช้กดปุ่ม "⏰ ตั้งเตือนกินยา"
     # ----------------------------------------
@@ -344,15 +353,15 @@ def handle_postback(event):reminder
         # สกัดเอาชื่อยาออกมาจาก payload
         parts = data.split("&drug=")
         drug_name = parts[1] if len(parts) > 1 else "ยาของคุณ"
-        
+
         # ดึง User ID เตรียมเอาไปผูกกับตาราง Database
         user_id = event.source.user_id
-        
+
         print(f"เตรียมบันทึกข้อมูลลง DB: User={user_id}, Drug={drug_name}")
-        
+
         # ตอบกลับผู้ใช้
         reply_text = f"⏰ ตั้งเวลาเตือนสำหรับยา {drug_name} เรียบร้อยครับ!\n(ระบบจะเชื่อมต่อฐานข้อมูลในเฟสถัดไป)"
-        
+
         line_bot_api.reply_message(
             event.reply_token,
             TextSendMessage(text=reply_text)
