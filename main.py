@@ -11,6 +11,77 @@ import json
 from linebot.models import MessageEvent, ImageMessage, TextSendMessage, FlexSendMessage, PostbackEvent
 
 # ==========================================
+# 1. ฟังก์ชันสร้างฟังก์ชันด่านหน้า (Gatekeeper)
+# ==========================================
+def check_image_quality(file_path):
+    # 1. ตรวจสอบขนาดไฟล์ (ไม่เกิน 3MB)
+    file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+    if file_size_mb > 3.0:
+        return False, f"⚠️ รูปภาพมีขนาดใหญ่เกินไป ({file_size_mb:.1f} MB) กรุณาส่งรูปไม่เกิน 3 MB ครับ หรือถ่ายผ่านกล้องของ LINE ได้เลยครับ"
+
+    img = cv2.imread(file_path)
+    if img is None:
+        return False, "⚠️ ไม่สามารถอ่านไฟล์รูปภาพได้ กรุณาส่งใหม่อีกครั้งครับ"
+
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    # 2. ตรวจสอบความสว่าง
+    brightness = np.mean(gray)
+    if brightness < 50:
+        return False, "⚠️ รูปภาพมืดเกินไป กรุณาถ่ายในที่สว่างแล้วส่งมาใหม่ครับ"
+    
+    # ตรวจแสงสะท้อน (พิกเซลสว่างจัด > 240 มีมากกว่า 5% ของพื้นที่ภาพ)
+    glare_ratio = np.sum(gray > 240) / gray.size
+    if glare_ratio > 0.05:
+        return False, "⚠️ รูปภาพมีแสงแฟลชสะท้อนบังข้อความ กรุณาหลีกเลี่ยงแสงสะท้อนแล้วถ่ายใหม่ครับ"
+
+    # 3. ตรวจสอบความเปรียบต่างสี (Contrast)
+    contrast = np.std(gray)
+    if contrast < 20:
+        return False, "⚠️ รูปภาพจางหรือสีกลืนกันเกินไป ทำให้ระบบอาจอ่านผิดพลาด กรุณาถ่ายใหม่อีกครั้งครับ"
+
+    # 4. ตรวจสอบความเบลอ (Blurriness)
+    blur_val = cv2.Laplacian(gray, cv2.CV_64F).var()
+    if blur_val < 100:
+        return False, "⚠️ รูปภาพเบลอเกินไป กรุณาแตะโฟกัสที่กล้องให้ตัวหนังสือคมชัด แล้วถ่ายใหม่ครับ"
+
+    # 5. ตรวจสอบระยะห่าง (Bounding Box Area)
+    edges = cv2.Canny(gray, 50, 150)
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if contours:
+        x_min, y_min = img.shape[1], img.shape[0]
+        x_max, y_max = 0, 0
+        for cnt in contours:
+            x, y, w, h = cv2.boundingRect(cnt)
+            x_min, y_min = min(x_min, x), min(y_min, y)
+            x_max, y_max = max(x_max, x + w), max(y_max, y + h)
+        
+        object_area = (x_max - x_min) * (y_max - y_min)
+        total_area = img.shape[0] * img.shape[1]
+        if (object_area / total_area) < 0.2:
+            return False, "⚠️ รูปภาพอยู่ไกลเกินไป กรุณาถ่ายใกล้ๆ ให้ฉลากยาเต็มกรอบภาพครับ"
+
+    # 6. Auto-Deskew (แก้เอียงอัตโนมัติ 1-15 องศา)
+    coords = np.column_stack(np.where(edges > 0))
+    if len(coords) > 0:
+        angle = cv2.minAreaRect(coords)[-1]
+        if angle < -45:
+            angle = -(90 + angle)
+        else:
+            angle = -angle
+        
+        # ถ้าเอียงนิดหน่อย ให้หมุนภาพเลย
+        if 1 < abs(angle) < 15:
+            (h, w) = img.shape[:2]
+            center = (w // 2, h // 2)
+            M = cv2.getRotationMatrix2D(center, angle, 1.0)
+            rotated = cv2.warpAffine(img, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+            cv2.imwrite(file_path, rotated) # บันทึกทับไฟล์เดิมที่แก้เอียงแล้ว
+
+    return True, "OK"
+
+
+# ==========================================
 # 1. ฟังก์ชันผู้เชี่ยวชาญการล้างภาพ (Image Preprocessing)
 # ==========================================
 def process_pharmacy_label(input_path, output_path):
@@ -102,7 +173,25 @@ def handle_message(event):
 def handle_image(event):
     message_id = event.message.id
     
-    # 3.1 รับและล้างภาพด้วย OpenCV
+    # ==========================================
+    # 0. แสดง Loading Animation (สถานะกำลังพิมพ์...)
+    # ==========================================
+    try:
+        url = "https://api.line.me/v2/bot/chat/loading/start"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {line_bot_api.http_client.headers['Authorization'].split(' ')[1]}" 
+        }
+        # ตั้งเวลาให้จุดไข่ปลาแสดงสูงสุด 5 วินาที (ครอบคลุมเวลาที่ AI คิดพอดี)
+        data = {
+            "chatId": event.source.user_id,
+            "loadingSeconds": 5
+        }
+        requests.post(url, headers=headers, json=data)
+    except Exception as e:
+        print(f"Loading Animation Error: {e}")
+
+    # 3.1 รับภาพจากผู้ใช้
     image_content = line_bot_api.get_message_content(message_id)
     file_path = f"/tmp/{message_id}.jpg"
     processed_path = f"/tmp/processed_{message_id}.jpg"
@@ -111,168 +200,131 @@ def handle_image(event):
         for chunk in image_content.iter_content():
             fd.write(chunk)
             
+    # ==========================================
+    # เฟส 1: ตรวจสอบคุณภาพรูป (QC Gatekeeper)
+    # ==========================================
+    is_valid, error_msg = check_image_quality(file_path)
+    if not is_valid:
+        # ถ้าไม่ผ่านเกณฑ์ เด้งแจ้งเตือนแล้วหยุดทำงานทันที (Fail-Fast)
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=error_msg))
+        return
+
+    # ==========================================
+    # เฟส 2: ล้างและตกแต่งภาพ
+    # ==========================================
     width, height = process_pharmacy_label(file_path, processed_path)
     
-    # 3.2 อ่านไฟล์ภาพที่ล้างเสร็จแล้วเข้ามาในรูปแบบ Binary เพื่อส่งให้ Gemini
     with open(processed_path, "rb") as f:
         image_bytes = f.read()
         
-    # 3.3 เรียกใช้งาน Gemini (ยิงตรงผ่าน SDK รวดเร็วและเสถียร)
+    # ==========================================
+    # เฟส 3: เรียกใช้งาน Gemini + ยามเฝ้าประตู (Bouncer)
+    # ==========================================
     try:
         response = ai_client.models.generate_content(
             model='gemini-2.5-flash',
             contents=[
-                types.Part.from_bytes(
-                    data=image_bytes,
-                    mime_type='image/jpeg',
-                ),
-                """นี่คือภาพฉลากยา กรุณาดึงข้อมูลและส่งกลับมาเป็นรูปแบบ JSON (ไม่ต้องมี Markdown หรือ Code block คร่อม) โดยใช้โครงสร้างดังนี้:
-            {
-            "trade_name": "ชื่อทางการค้า หรือ ระบุ null หากไม่พบ",
-            "generic_name": "ชื่อยา หรือ ระบุ null หากไม่พบ",
-            "indication": "ข้อบ่งใช้ หรือ สรรพคุณ หรือ ระบุ null หากไม่พบ", 
-            "dosage": "ขนาดยา หรือ ระบุ null หากไม่พบ",
-            "instruction": "วิธีรับประทาน หรือ ระบุ null หากไม่พบ",
-            "warning": "คำเตือน หรือ ระบุ null หากไม่พบ"
-            }
-            ห้ามมีข้อความอธิบายใดๆ เพิ่มเติม นอกเหนือจาก JSON object นี้"""
+                types.Part.from_bytes(data=image_bytes, mime_type='image/jpeg'),
+                """นี่คือภาพฉลากยา 
+กฎสำคัญ:
+1. หากพบว่าตัวหนังสือในภาพตะแคงซ้าย/ขวา (90, 270 องศา) หรือ กลับหัว (180 องศา) ให้ตอบกลับมาเป็น JSON แบบนี้เท่านั้น: {"error": "rotated"} และห้ามตอบอย่างอื่น
+2. หากภาพตั้งตรงปกติ (0 องศา) กรุณาดึงข้อมูลและส่งกลับมาเป็นรูปแบบ JSON (ไม่ต้องมี Markdown หรือ Code block คร่อม) โดยใช้โครงสร้างดังนี้:
+{
+"trade_name": "ชื่อทางการค้า หรือ ระบุ null หากไม่พบ",
+"generic_name": "ชื่อยา หรือ ระบุ null หากไม่พบ",
+"indication": "ข้อบ่งใช้ หรือ สรรพคุณ หรือ ระบุ null หากไม่พบ", 
+"dosage": "ขนาดยา หรือ ระบุ null หากไม่พบ",
+"instruction": "วิธีรับประทาน หรือ ระบุ null หากไม่พบ",
+"warning": "คำเตือน หรือ ระบุ null หากไม่พบ"
+}
+ห้ามมีข้อความอธิบายใดๆ เพิ่มเติม นอกเหนือจาก JSON object นี้"""
             ]
         )
         
-        # 1. รับข้อความผลลัพธ์จาก Gemini
         raw_text = response.text.strip()
-        
-        # 2. ดักจับและลบ Markdown Code Block (เผื่อ AI แอบใส่ ```json มาคลุม)
         if raw_text.startswith('```json'):
             raw_text = raw_text.replace('```json', '').replace('```', '').strip()
         elif raw_text.startswith('```'):
             raw_text = raw_text.replace('```', '').strip()
             
         try:
-            # 3. แปลงข้อความ JSON ให้กลายเป็น Python Dictionary
             data = json.loads(raw_text)
             
-            # 4. จัดรูปแบบข้อความใหม่ให้สวยงามสำหรับแสดงใน LINE
+            # 🚨 ดักจับ Error รูปกลับหัวจาก Gemini
+            if data.get("error") == "rotated":
+                line_bot_api.reply_message(
+                    event.reply_token,
+                    TextSendMessage(text="📸 รูปภาพตะแคงหรือกลับหัวครับ กรุณาถ่ายฉลากยาให้ตั้งตรงแล้วส่งมาใหม่อีกครั้งนะครับ")
+                )
+                return
+
+            # ถ้าข้อมูลปกติ ดำเนินการสร้าง Flex Message ต่อ
             trade_name = data.get('trade_name') or 'ไม่ระบุ'
             generic_name = data.get('generic_name') or 'ไม่ระบุ'
-            
-            # (แก้) ปรับลบ slash (/) ที่เกินมาตรง trade_name ออก
-            reply_message = f"""1. **ชื่อทางการค้า:**
-                * {trade_name}
-    
-            2. **ชื่อยา:**
-                * {generic_name}
+            indication = data.get('indication') or 'ไม่ระบุ'
+            dosage = data.get('dosage') or 'ไม่ระบุ'
+            instruction = data.get('instruction') or 'ไม่ระบุ'
+            warning = data.get('warning') or 'ไม่มี'
 
-            3. **ข้อบ่งใช้:**
-                * {data.get('indication', 'ไม่ระบุ')}
+            flex_bubble = {
+                "type": "bubble",
+                "size": "mega",
+                "header": {
+                    "type": "box",
+                    "layout": "vertical",
+                    "backgroundColor": "#1DB446",
+                    "contents": [
+                        {"type": "text", "text": "💊 ข้อมูลฉลากยา (บ้านยาสุขใจ)", "weight": "bold", "size": "lg", "color": "#FFFFFF"}
+                    ]
+                },
+                "body": {
+                    "type": "box",
+                    "layout": "vertical",
+                    "spacing": "md",
+                    "contents": [
+                        {"type": "text", "text": f"ชื่อการค้า: {trade_name}", "weight": "bold", "wrap": True},
+                        {"type": "text", "text": f"ชื่อยา: {generic_name}", "color": "#666666", "size": "sm", "wrap": True},
+                        {"type": "separator", "margin": "md"},
+                        {"type": "text", "text": f"🎯 ข้อบ่งใช้: {indication}", "wrap": True},
+                        {"type": "text", "text": f"⚖️ ขนาดยา: {dosage}", "wrap": True},
+                        {"type": "text", "text": f"⏱️ วิธีใช้: {instruction}", "weight": "bold", "color": "#E03131", "wrap": True},
+                        {"type": "text", "text": f"⚠️ คำเตือน: {warning}", "size": "sm", "color": "#FFA500", "wrap": True}
+                    ]
+                },
+                "footer": {
+                    "type": "box",
+                    "layout": "vertical",
+                    "spacing": "sm",
+                    "contents": [
+                        {
+                            "type": "button",
+                            "style": "primary",
+                            "height": "sm",
+                            "action": {"type": "postback", "label": "⏰ ตั้งเตือนกินยา", "data": f"action=set_reminder&drug={generic_name}"}
+                        },
+                        {
+                            "type": "button",
+                            "style": "secondary",
+                            "height": "sm",
+                            "action": {"type": "postback", "label": "✅ รับทราบ", "data": "action=acknowledge"}
+                        }
+                    ]
+                }
+            }
 
-            4. **ขนาดยา:**
-                * {data.get('dosage', 'ไม่ระบุ')}
-
-            5. **วิธีรับประทาน:**
-                * {data.get('instruction', 'ไม่ระบุ')}
-
-            6. **คำเตือน:**
-                * {data.get('warning', 'ไม่มี')}"""
+            line_bot_api.reply_message(
+                event.reply_token,
+                FlexSendMessage(alt_text=f"ข้อมูลยา: {generic_name}", contents=flex_bubble)
+            )
 
         except json.JSONDecodeError:
-            # กรณี Error ไม่เป็น JSON
-            reply_message = f"พบปัญหาในการจัดรูปแบบข้อมูล:\n{raw_text}"
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"พบปัญหาในการจัดรูปแบบข้อมูล:\n{raw_text}"))
             
     except Exception as e:
-        reply_message = f"⚠️ ไม่สามารถเชื่อมต่อสมอง AI Gemini ได้: {str(e)}"
-    
-    # 3.4 ส่งคำตอบกลับไปแสดงผลบนหน้าจอ LINE (สร้างโครงสร้าง Flex Message สวยงาม)
-    # ดึงข้อมูลจาก data (Dictionary) มาเตรียมไว้
-    trade_name = data.get('trade_name') or 'ไม่ระบุ'
-    generic_name = data.get('generic_name') or 'ไม่ระบุ'
-    indication = data.get('indication') or 'ไม่ระบุ'
-    dosage = data.get('dosage') or 'ไม่ระบุ'
-    instruction = data.get('instruction') or 'ไม่ระบุ'
-    warning = data.get('warning') or 'ไม่มี'
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"⚠️ ไม่สามารถเชื่อมต่อสมอง AI ได้: {str(e)}"))
 
-    # ออกแบบหน้าตา Flex Message
-    flex_bubble = {
-        "type": "bubble",
-        "size": "mega",
-        "header": {
-            "type": "box",
-            "layout": "vertical",
-            "backgroundColor": "#1DB446",
-            "contents": [
-                {
-                    "type": "text",
-                    "text": "💊 ข้อมูลฉลากยา (บ้านยาสุขใจ)",
-                    "weight": "bold",
-                    "size": "lg",
-                    "color": "#FFFFFF"
-                }
-            ]
-        },
-        "body": {
-            "type": "box",
-            "layout": "vertical",
-            "spacing": "md",
-            "contents": [
-                {"type": "text", "text": f"ชื่อการค้า: {trade_name}", "weight": "bold", "wrap": True},
-                {"type": "text", "text": f"ชื่อยา: {generic_name}", "color": "#666666", "size": "sm", "wrap": True},
-                {"type": "separator", "margin": "md"},
-                {"type": "text", "text": f"🎯 ข้อบ่งใช้: {indication}", "wrap": True},
-                {"type": "text", "text": f"⚖️ ขนาดยา: {dosage}", "wrap": True},
-                {"type": "text", "text": f"⏱️ วิธีใช้: {instruction}", "weight": "bold", "color": "#E03131", "wrap": True},
-                {"type": "text", "text": f"⚠️ คำเตือน: {warning}", "size": "sm", "color": "#FFA500", "wrap": True}
-            ]
-        },
-        "footer": {
-            "type": "box",
-            "layout": "vertical",
-            "spacing": "sm",
-            "contents": [
-                {
-                    "type": "button",
-                    "style": "primary",
-                    "height": "sm",
-                    "action": {
-                        "type": "postback",
-                        "label": "⏰ ตั้งเตือนกินยา",
-                        "data": f"action=set_reminder&drug={generic_name}"
-                    }
-                },
-                {
-                    "type": "button",
-                    "style": "secondary",
-                    "height": "sm",
-                    "action": {
-                        "type": "postback",
-                        "label": "✅ รับทราบ",
-                        "data": "action=acknowledge"
-                    }
-                }
-            ]
-        }
-    }
-
-    # 3.5 ส่ง Flex Message กลับไปที่ LINE
-    try:
-        line_bot_api.reply_message(
-            event.reply_token,
-            FlexSendMessage(alt_text=f"ข้อมูลยา: {generic_name}", contents=flex_bubble)
-        )
-    except Exception as e:
-        # ระบบสำรอง (Fallback) หาก Flex Message ขัดข้อง ให้ส่งเป็น Text ธรรมดา
-        print(f"Flex Message Error: {e}")
-        line_bot_api.reply_message(
-            event.reply_token,
-            TextSendMessage(text=f"ข้อมูลยา:\n{generic_name}\nวิธีใช้: {instruction}")
-        )
-    
-    line_bot_api.reply_message(
-        event.reply_token,
-        TextSendMessage(text=final_reply)
-    )
-    
 @handler.add(PostbackEvent)
-def handle_postback(event):
+def handle_postback(event):reminder
     data = event.postback.data
     
     # ----------------------------------------
