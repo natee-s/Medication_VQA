@@ -8,6 +8,7 @@ import numpy as np
 from google import genai
 from google.genai import types
 import json
+import requests
 from linebot.models import MessageEvent, ImageMessage, TextSendMessage, FlexSendMessage, PostbackEvent
 
 # ==========================================
