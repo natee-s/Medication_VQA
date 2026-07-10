@@ -8,6 +8,7 @@ import numpy as np
 from google import genai
 from google.genai import types
 import json
+from linebot.models import MessageEvent, ImageMessage, TextSendMessage, FlexSendMessage
 
 # ==========================================
 # 1. ฟังก์ชันผู้เชี่ยวชาญการล้างภาพ (Image Preprocessing)
@@ -171,9 +172,89 @@ def handle_image(event):
     except Exception as e:
         reply_message = f"⚠️ ไม่สามารถเชื่อมต่อสมอง AI Gemini ได้: {str(e)}"
     
-    # 3.4 ส่งคำตอบกลับไปแสดงผลบนหน้าจอ LINE
-    # (แก้) เปลี่ยนมารับค่าจาก reply_message
-    final_reply = f"✅ ประมวลผลภาพเสร็จสิ้น (Pipeline B - Temporary Mode)\n\nผลการวิเคราะห์จาก Gemini:\n{reply_message}"
+    # 3.4 ส่งคำตอบกลับไปแสดงผลบนหน้าจอ LINE (สร้างโครงสร้าง Flex Message สวยงาม)
+    # ดึงข้อมูลจาก data (Dictionary) มาเตรียมไว้
+    trade_name = data.get('trade_name') or 'ไม่ระบุ'
+    generic_name = data.get('generic_name') or 'ไม่ระบุ'
+    indication = data.get('indication') or 'ไม่ระบุ'
+    dosage = data.get('dosage') or 'ไม่ระบุ'
+    instruction = data.get('instruction') or 'ไม่ระบุ'
+    warning = data.get('warning') or 'ไม่มี'
+
+    # ออกแบบหน้าตา Flex Message
+    flex_bubble = {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#1DB446",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "💊 ข้อมูลฉลากยา (บ้านยาสุขใจ)",
+                    "weight": "bold",
+                    "size": "lg",
+                    "color": "#FFFFFF"
+                }
+            ]
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "md",
+            "contents": [
+                {"type": "text", "text": f"ชื่อการค้า: {trade_name}", "weight": "bold", "wrap": True},
+                {"type": "text", "text": f"ชื่อยา: {generic_name}", "color": "#666666", "size": "sm", "wrap": True},
+                {"type": "separator", "margin": "md"},
+                {"type": "text", "text": f"🎯 ข้อบ่งใช้: {indication}", "wrap": True},
+                {"type": "text", "text": f"⚖️ ขนาดยา: {dosage}", "wrap": True},
+                {"type": "text", "text": f"⏱️ วิธีใช้: {instruction}", "weight": "bold", "color": "#E03131", "wrap": True},
+                {"type": "text", "text": f"⚠️ คำเตือน: {warning}", "size": "sm", "color": "#FFA500", "wrap": True}
+            ]
+        },
+        "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "sm",
+            "contents": [
+                {
+                    "type": "button",
+                    "style": "primary",
+                    "height": "sm",
+                    "action": {
+                        "type": "postback",
+                        "label": "⏰ ตั้งเตือนกินยา",
+                        "data": f"action=set_reminder&drug={generic_name}"
+                    }
+                },
+                {
+                    "type": "button",
+                    "style": "secondary",
+                    "height": "sm",
+                    "action": {
+                        "type": "postback",
+                        "label": "✅ รับทราบ",
+                        "data": "action=acknowledge"
+                    }
+                }
+            ]
+        }
+    }
+
+    # 3.5 ส่ง Flex Message กลับไปที่ LINE
+    try:
+        line_bot_api.reply_message(
+            event.reply_token,
+            FlexSendMessage(alt_text=f"ข้อมูลยา: {generic_name}", contents=flex_bubble)
+        )
+    except Exception as e:
+        # ระบบสำรอง (Fallback) หาก Flex Message ขัดข้อง ให้ส่งเป็น Text ธรรมดา
+        print(f"Flex Message Error: {e}")
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=f"ข้อมูลยา:\n{generic_name}\nวิธีใช้: {instruction}")
+        )
     
     line_bot_api.reply_message(
         event.reply_token,
