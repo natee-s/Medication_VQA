@@ -23,6 +23,7 @@ import requests
 def check_image_quality(file_path):
     # 1. ตรวจสอบขนาดไฟล์ (ไม่เกิน 3MB)
     file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+    print(f"🔍 [TEST] ขนาดไฟล์รูปนี้คือ: {file_size_mb:.1f} MB")
     if file_size_mb > 3.0:
         return False, f"⚠️ รูปภาพมีขนาดใหญ่เกินไป ({file_size_mb:.1f} MB) กรุณาส่งรูปไม่เกิน 3 MB ครับ หรือถ่ายผ่านกล้องของ LINE ได้เลยครับ"
 
@@ -34,21 +35,25 @@ def check_image_quality(file_path):
 
     # 2. ตรวจสอบความสว่าง
     brightness = np.mean(gray)
+    print(f"🔍 [TEST] ค่าความสว่างรูปนี้คือ: {brightness}")
     if brightness < 50:
         return False, "⚠️ รูปภาพมืดเกินไป กรุณาถ่ายในที่สว่างแล้วส่งมาใหม่ครับ"
     
     # ตรวจแสงสะท้อน (พิกเซลสว่างจัด > 240 มีมากกว่า 5% ของพื้นที่ภาพ)
     glare_ratio = np.sum(gray > 240) / gray.size
+    print(f"🔍 [TEST] ค่าแสงสะท้อนรูปนี้คือ: {glare_ratio}")
     if glare_ratio > 0.05:
         return False, "⚠️ รูปภาพมีแสงแฟลชสะท้อนบังข้อความ กรุณาหลีกเลี่ยงแสงสะท้อนแล้วถ่ายใหม่ครับ"
 
     # 3. ตรวจสอบความเปรียบต่างสี (Contrast)
     contrast = np.std(gray)
+    print(f"🔍 [TEST] ค่าความเปรียบต่างสีรูปนี้คือ: {contrast}")
     if contrast < 20:
         return False, "⚠️ รูปภาพจางหรือสีกลืนกันเกินไป ทำให้ระบบอาจอ่านผิดพลาด กรุณาถ่ายใหม่อีกครั้งครับ"
 
     # 4. ตรวจสอบความเบลอ (Blurriness)
     blur_val = cv2.Laplacian(gray, cv2.CV_64F).var()
+    print(f"🔍 [TEST] ค่าความเบลอรูปนี้คือ: {blur_val}")
     if blur_val < 100:
         return False, "⚠️ รูปภาพเบลอเกินไป กรุณาแตะโฟกัสที่กล้องให้ตัวหนังสือคมชัด แล้วถ่ายใหม่ครับ"
 
@@ -65,6 +70,7 @@ def check_image_quality(file_path):
         
         object_area = (x_max - x_min) * (y_max - y_min)
         total_area = img.shape[0] * img.shape[1]
+        print(f"🔍 [TEST] ค่าพื้นที่วัตถุ: {object_area}, ค่าพื้นที่ภาพรวม: {total_area}")
         if (object_area / total_area) < 0.2:
             return False, "⚠️ รูปภาพอยู่ไกลเกินไป กรุณาถ่ายใกล้ๆ ให้ฉลากยาเต็มกรอบภาพครับ"
 
@@ -190,7 +196,7 @@ def handle_image(event):
         url = "https://api.line.me/v2/bot/chat/loading/start"
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {line_bot_api.http_client.headers['Authorization'].split(' ')[1]}" 
+            "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"
         }
         # ตั้งเวลาให้จุดไข่ปลาแสดงสูงสุด 5 วินาที (ครอบคลุมเวลาที่ AI คิดพอดี)
         data = {
