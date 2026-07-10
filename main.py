@@ -8,7 +8,7 @@ import numpy as np
 from google import genai
 from google.genai import types
 import json
-from linebot.models import MessageEvent, ImageMessage, TextSendMessage, FlexSendMessage
+from linebot.models import MessageEvent, ImageMessage, TextSendMessage, FlexSendMessage, PostbackEvent
 
 # ==========================================
 # 1. ฟังก์ชันผู้เชี่ยวชาญการล้างภาพ (Image Preprocessing)
@@ -61,6 +61,16 @@ ai_client = genai.Client(api_key=GEMINI_API_KEY)
 @app.get("/")
 def root():
     return {"message": "Banya Sookjai AI Server is running!"}
+
+@app.get("/cron/check-reminder")
+def check_reminder():
+    # 📌 ในอนาคตเราจะเขียนโค้ดตรงนี้เพื่อ:
+    # 1. ค้นหา Database ว่ามีผู้ใช้คนไหนถึงเวลากินยาหรือยัง
+    # 2. ใช้ line_bot_api.push_message() ส่งแจ้งเตือน
+    
+    print("🔔 Cron job is triggered! Server is awake & Checking reminders...")
+    
+    return {"status": "success", "message": "Cron job executed successfully. Server is active."}
 
 @app.post("/webhook")
 async def webhook(request: Request):
@@ -148,22 +158,22 @@ def handle_image(event):
             
             # (แก้) ปรับลบ slash (/) ที่เกินมาตรง trade_name ออก
             reply_message = f"""1. **ชื่อทางการค้า:**
-    * {trade_name}
+                * {trade_name}
     
-2. **ชื่อยา:**
-    * {generic_name}
+            2. **ชื่อยา:**
+                * {generic_name}
 
-3. **ข้อบ่งใช้:**
-    * {data.get('indication', 'ไม่ระบุ')}
+            3. **ข้อบ่งใช้:**
+                * {data.get('indication', 'ไม่ระบุ')}
 
-4. **ขนาดยา:**
-    * {data.get('dosage', 'ไม่ระบุ')}
+            4. **ขนาดยา:**
+                * {data.get('dosage', 'ไม่ระบุ')}
 
-5. **วิธีรับประทาน:**
-    * {data.get('instruction', 'ไม่ระบุ')}
+            5. **วิธีรับประทาน:**
+                * {data.get('instruction', 'ไม่ระบุ')}
 
-6. **คำเตือน:**
-    * {data.get('warning', 'ไม่มี')}"""
+            6. **คำเตือน:**
+                * {data.get('warning', 'ไม่มี')}"""
 
         except json.JSONDecodeError:
             # กรณี Error ไม่เป็น JSON
@@ -260,3 +270,37 @@ def handle_image(event):
         event.reply_token,
         TextSendMessage(text=final_reply)
     )
+    
+@handler.add(PostbackEvent)
+def handle_postback(event):
+    data = event.postback.data
+    
+    # ----------------------------------------
+    # กรณีที่ 1: ผู้ใช้กดปุ่ม "✅ รับทราบ"
+    # ----------------------------------------
+    if data == "action=acknowledge":
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="✅ ระบบรับทราบเรียบร้อยครับ คุณสามารถพิมพ์สอบถามข้อมูลเกี่ยวกับยานี้เพิ่มเติมได้เลยครับ หรือหากต้องการให้อ่านฉลากยาตัวอื่น สามารถส่งรูปมาได้เลยครับ")
+        )
+        
+    # ----------------------------------------
+    # กรณีที่ 2: ผู้ใช้กดปุ่ม "⏰ ตั้งเตือนกินยา"
+    # ----------------------------------------
+    elif data.startswith("action=set_reminder"):
+        # สกัดเอาชื่อยาออกมาจาก payload
+        parts = data.split("&drug=")
+        drug_name = parts[1] if len(parts) > 1 else "ยาของคุณ"
+        
+        # ดึง User ID เตรียมเอาไปผูกกับตาราง Database
+        user_id = event.source.user_id
+        
+        print(f"เตรียมบันทึกข้อมูลลง DB: User={user_id}, Drug={drug_name}")
+        
+        # ตอบกลับผู้ใช้
+        reply_text = f"⏰ ตั้งเวลาเตือนสำหรับยา {drug_name} เรียบร้อยครับ!\n(ระบบจะเชื่อมต่อฐานข้อมูลในเฟสถัดไป)"
+        
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=reply_text)
+        )
