@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 from google import genai
 from google.genai import types
+import json
 
 # ==========================================
 # 1. ฟังก์ชันผู้เชี่ยวชาญการล้างภาพ (Image Preprocessing)
@@ -105,7 +106,7 @@ def handle_image(event):
     with open(processed_path, "rb") as f:
         image_bytes = f.read()
         
-    # 3.3 เรียกใช้งาน Gemini 1.5 Flash (ยิงตรงผ่าน SDK รวดเร็วและเสถียร)
+    # 3.3 เรียกใช้งาน Gemini (ยิงตรงผ่าน SDK รวดเร็วและเสถียร)
     try:
         response = ai_client.models.generate_content(
             model='gemini-2.5-flash',
@@ -118,6 +119,7 @@ def handle_image(event):
             {
             "trade_name": "ชื่อทางการค้า หรือ ระบุ null หากไม่พบ",
             "generic_name": "ชื่อยา หรือ ระบุ null หากไม่พบ",
+            "indication": "ข้อบ่งใช้ หรือ สรรพคุณ หรือ ระบุ null หากไม่พบ", 
             "dosage": "ขนาดยา หรือ ระบุ null หากไม่พบ",
             "instruction": "วิธีรับประทาน หรือ ระบุ null หากไม่พบ",
             "warning": "คำเตือน หรือ ระบุ null หากไม่พบ"
@@ -125,13 +127,53 @@ def handle_image(event):
             ห้ามมีข้อความอธิบายใดๆ เพิ่มเติม นอกเหนือจาก JSON object นี้"""
             ]
         )
-        draft_answer = response.text
         
-    except Exception as e:
-        draft_answer = f"⚠️ ไม่สามารถเชื่อมต่อสมอง AI Gemini ได้: {str(e)}"
+        # 1. รับข้อความผลลัพธ์จาก Gemini
+        raw_text = response.text.strip()
+        
+        # 2. ดักจับและลบ Markdown Code Block (เผื่อ AI แอบใส่ ```json มาคลุม)
+        if raw_text.startswith('```json'):
+            raw_text = raw_text.replace('```json', '').replace('```', '').strip()
+        elif raw_text.startswith('```'):
+            raw_text = raw_text.replace('```', '').strip()
+            
+        try:
+            # 3. แปลงข้อความ JSON ให้กลายเป็น Python Dictionary
+            data = json.loads(raw_text)
+            
+            # 4. จัดรูปแบบข้อความใหม่ให้สวยงามสำหรับแสดงใน LINE
+            trade_name = data.get('trade_name') or 'ไม่ระบุ'
+            generic_name = data.get('generic_name') or 'ไม่ระบุ'
+            
+            # (แก้) ปรับลบ slash (/) ที่เกินมาตรง trade_name ออก
+            reply_message = f"""1. **ชื่อทางการค้า:**
+    * {trade_name}
     
-    # 3.4 ส่งคำตอบกลับไปแสดงผลบนหน้าจอ LINE ของผู้ใช้
-    final_reply = f"✅ ประมวลผลภาพเสร็จสิ้น (Pipeline B - Temporary Mode)\n\nผลการวิเคราะห์จาก Gemini:\n{draft_answer}"
+2. **ชื่อยา:**
+    * {generic_name}
+
+3. **ข้อบ่งใช้:**
+    * {data.get('indication', 'ไม่ระบุ')}
+
+4. **ขนาดยา:**
+    * {data.get('dosage', 'ไม่ระบุ')}
+
+5. **วิธีรับประทาน:**
+    * {data.get('instruction', 'ไม่ระบุ')}
+
+6. **คำเตือน:**
+    * {data.get('warning', 'ไม่มี')}"""
+
+        except json.JSONDecodeError:
+            # กรณี Error ไม่เป็น JSON
+            reply_message = f"พบปัญหาในการจัดรูปแบบข้อมูล:\n{raw_text}"
+            
+    except Exception as e:
+        reply_message = f"⚠️ ไม่สามารถเชื่อมต่อสมอง AI Gemini ได้: {str(e)}"
+    
+    # 3.4 ส่งคำตอบกลับไปแสดงผลบนหน้าจอ LINE
+    # (แก้) เปลี่ยนมารับค่าจาก reply_message
+    final_reply = f"✅ ประมวลผลภาพเสร็จสิ้น (Pipeline B - Temporary Mode)\n\nผลการวิเคราะห์จาก Gemini:\n{reply_message}"
     
     line_bot_api.reply_message(
         event.reply_token,
