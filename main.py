@@ -230,66 +230,6 @@ def search_medicine_in_db(drug_name: str):
         print(f"⚠️ เกิดข้อผิดพลาดในการค้นหาข้อมูล: {e}")
         return None
 
-# ==========================================
-# 3. ระบบจัดการข้อความ (Text & Image)
-# ==========================================
-
-@handler.add(MessageEvent, message=TextMessage)
-def handle_message(event):
-    reply_text = f"คุณพิมพ์มาว่า: {event.message.text}\n(ขณะนี้ระบบกำลังทดสอบฟังก์ชันอ่านภาพฉลากยาด้วย Gemini 1.5 Flash)"
-    line_bot_api.reply_message(
-        event.reply_token,
-        TextSendMessage(text=reply_text)
-    )
-
-@handler.add(MessageEvent, message=ImageMessage)
-def handle_image(event):
-    message_id = event.message.id
-    
-    # ==========================================
-    # 0. แสดง Loading Animation (สถานะกำลังพิมพ์...)
-    # ==========================================
-    try:
-        url = "https://api.line.me/v2/bot/chat/loading/start"
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"
-        }
-        # ตั้งเวลาให้จุดไข่ปลาแสดงสูงสุด 5 วินาที (ครอบคลุมเวลาที่ AI คิดพอดี)
-        data = {
-            "chatId": event.source.user_id,
-            "loadingSeconds": 5
-        }
-        requests.post(url, headers=headers, json=data)
-    except Exception as e:
-        print(f"Loading Animation Error: {e}")
-
-    # 3.1 รับภาพจากผู้ใช้
-    image_content = line_bot_api.get_message_content(message_id)
-    file_path = f"/tmp/{message_id}.jpg"
-    processed_path = f"/tmp/processed_{message_id}.jpg"
-    
-    with open(file_path, 'wb') as fd:
-        for chunk in image_content.iter_content():
-            fd.write(chunk)
-            
-    # ==========================================
-    # เฟส 1: ตรวจสอบคุณภาพรูป (QC Gatekeeper)
-    # ==========================================
-    is_valid, error_msg = check_image_quality(file_path)
-    if not is_valid:
-        # ถ้าไม่ผ่านเกณฑ์ เด้งแจ้งเตือนแล้วหยุดทำงานทันที (Fail-Fast)
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=error_msg))
-        return
-
-    # ==========================================
-    # เฟส 2: ล้างและตกแต่งภาพ
-    # ==========================================
-    width, height = process_pharmacy_label(file_path, processed_path)
-    
-    with open(processed_path, "rb") as f:
-        image_bytes = f.read()
-        
     # ==========================================
     # เฟส 3: เรียกใช้งาน Gemini + ค้นหาข้อมูลจริง (RAG)
     # ==========================================
@@ -301,7 +241,7 @@ def handle_image(event):
                 """คุณคือระบบ OCR ดึงคีย์เวิร์ดชื่อยาจากภาพเพื่อนำไปค้นหาในฐานข้อมูล
 กฎสำคัญ:
 1. หากภาพตะแคงหรือกลับหัว ให้ตอบ error เป็น "rotated"
-2. หากตั้งตรงปกติ ให้ดึง "ชื่อยาภาษาอังกฤษ (Generic Name หรือ Trade Name ก็ได้)" ที่เด่นชัดที่สุดในภาพออกมาเพียงชื่อเดียว
+2. หากตั้งตรงปกติ ให้ดึง "ชื่อยาภาษาอังกฤษ (Generic Name หรือ Trade Name ก็ได้)" ที่เด่นชัดที่สุดในภาพออกมาเพียงชื่อเดียว (ระบุเฉพาะชื่อ ไม่ต้องใส่ขนาดมิลลิกรัม)
 
 รูปแบบ JSON ที่ต้องการเท่านั้น (ห้ามมีอธิบายเพิ่ม):
 {
@@ -342,7 +282,7 @@ def handle_image(event):
                 # กรณีหาชื่อยาไม่เจอใน Database
                 line_bot_api.reply_message(
                     event.reply_token, 
-                    TextSendMessage(text=f"🔍 ระบบอ่านชื่อยาได้ว่า '{search_keyword}' แต่ไม่พบข้อมูลยานี้ในฐานข้อมูลของร้านบ้านยาสุขใจครับ")
+                    TextSendMessage(text=f"🔍 ระบบสกัดชื่อยาได้ว่า '{search_keyword}' แต่ไม่พบข้อมูลนี้ในฐานข้อมูลครับ")
                 )
                 return
             
@@ -362,7 +302,7 @@ def handle_image(event):
                     "layout": "vertical",
                     "backgroundColor": "#1DB446",
                     "contents": [
-                        {"type": "text", "text": "💊 ข้อมูลฉลากยา (บ้านยาสุขใจ)", "weight": "bold", "size": "lg", "color": "#FFFFFF"}
+                        {"type": "text", "text": "💊 ข้อมูลฉลากยา", "weight": "bold", "size": "lg", "color": "#FFFFFF"}
                     ]
                 },
                 "body": {
@@ -406,10 +346,10 @@ def handle_image(event):
             )
 
         except json.JSONDecodeError:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"พบปัญหาในการจัดรูปแบบข้อมูล:\n{raw_text}"))
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"พบปัญหาในการจัดรูปแบบข้อมูลจาก AI:\n{raw_text}"))
             
     except Exception as e:
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"⚠️ ไม่สามารถเชื่อมต่อสมอง AI ได้: {str(e)}"))
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"⚠️ เกิดข้อผิดพลาดในระบบประมวลผล: {str(e)}"))
 
 @handler.add(PostbackEvent)
 def handle_postback(event):
