@@ -291,30 +291,22 @@ def handle_image(event):
         image_bytes = f.read()
         
     # ==========================================
-    # เฟส 3: เรียกใช้งาน Gemini + ยามเฝ้าประตู (Bouncer)
+    # เฟส 3: เรียกใช้งาน Gemini + ค้นหาข้อมูลจริง (RAG)
     # ==========================================
     try:
         response = ai_client.models.generate_content(
             model='gemini-2.5-flash',
             contents=[
                 types.Part.from_bytes(data=image_bytes, mime_type='image/jpeg'),
-                """คุณคือระบบ OCR สกัดข้อมูลจากฉลากยาที่มีความแม่นยำสูงสุด 
+                """คุณคือระบบ OCR ดึงคีย์เวิร์ดชื่อยาจากภาพเพื่อนำไปค้นหาในฐานข้อมูล
+กฎสำคัญ:
+1. หากภาพตะแคงหรือกลับหัว ให้ตอบ error เป็น "rotated"
+2. หากตั้งตรงปกติ ให้ดึง "ชื่อยาภาษาอังกฤษ (Generic Name หรือ Trade Name ก็ได้)" ที่เด่นชัดที่สุดในภาพออกมาเพียงชื่อเดียว
 
-กฎเหล็กระดับวิกฤต (ห้ามฝ่าฝืน):
-1. สกัดข้อมูลจาก "ตัวอักษรที่มองเห็นในภาพเท่านั้น" ห้ามคิดเอง ห้ามเติมคำ ห้ามแปลงหน่วย (เช่น ห้ามแปลงช้อนชาเป็น มล.) และห้ามนำความรู้ทางการแพทย์ภายนอกมาใช้เด็ดขาด
-2. หากไม่พบข้อมูลในหัวข้อนั้นบนฉลาก ให้ตอบ null ทันที ห้ามเดาเอาเอง
-3. ตรวจสอบทิศทางของภาพ หากภาพตะแคงหรือกลับหัว ให้ตอบ error ทันที
-
-กรุณาส่งกลับมาเป็น JSON ตามโครงสร้างนี้เท่านั้น:
+รูปแบบ JSON ที่ต้องการเท่านั้น (ห้ามมีอธิบายเพิ่ม):
 {
-  "image_orientation": "ระบุว่า normal, rotated_90, rotated_270, หรือ upside_down",
-  "error": "หาก image_orientation ไม่ใช่ normal ให้ใส่ค่า 'rotated' แต่ถ้าปกติให้ใส่ null",
-  "trade_name": "ชื่อทางการค้าที่ปรากฏในภาพ หรือ null",
-  "generic_name": "ชื่อยาสามัญที่ปรากฏในภาพ หรือ null",
-  "indication": "ข้อบ่งใช้ที่ปรากฏในภาพ หรือ null", 
-  "dosage_frequency": "ขนาดยาที่ปรากฏในภาพ หรือ null",
-  "instruction_time": "วิธีรับประทานที่ปรากฏในภาพครบทุกส่วน หรือ null",
-  "precaution": "คำเตือนที่ปรากฏในภาพ หรือ null"
+"error": "rotated หรือ null",
+"search_keyword": "ชื่อยาภาษาอังกฤษ หรือ null"
 }"""
             ]
         )
@@ -336,13 +328,31 @@ def handle_image(event):
                 )
                 return
 
-            # ถ้าข้อมูลปกติ ดำเนินการสร้าง Flex Message ต่อ
-            trade_name = data.get('trade_name') or 'ไม่ระบุ'
-            generic_name = data.get('generic_name') or 'ไม่ระบุ'
-            indication = data.get('indication') or 'ไม่ระบุ'
-            dosage_frequency = data.get('dosage_frequency') or 'ไม่ระบุ'
-            instruction_time = data.get('instruction_time') or 'ไม่ระบุ'
-            precaution = data.get('precaution') or 'ไม่มี'
+            search_keyword = data.get("search_keyword")
+            if not search_keyword:
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text="⚠️ ระบบอ่านชื่อยาบนฉลากไม่ชัดเจน กรุณาถ่ายใหม่อีกครั้งครับ"))
+                return
+
+            # ----------------------------------------------------
+            # 🎯 เริ่มกระบวนการ RAG (ค้นหาชื่อยาใน Supabase)
+            # ----------------------------------------------------
+            db_data = search_medicine_in_db(search_keyword)
+
+            if not db_data:
+                # กรณีหาชื่อยาไม่เจอใน Database
+                line_bot_api.reply_message(
+                    event.reply_token, 
+                    TextSendMessage(text=f"🔍 ระบบอ่านชื่อยาได้ว่า '{search_keyword}' แต่ไม่พบข้อมูลยานี้ในฐานข้อมูลของร้านบ้านยาสุขใจครับ")
+                )
+                return
+            
+            # ถ้าเจอข้อมูล ดึงข้อมูล Official จาก Database มาใช้ทำ Flex Message ทันที
+            trade_name = db_data.get('trade_name') or 'ไม่ระบุ'
+            generic_name = db_data.get('generic_name') or 'ไม่ระบุ'
+            indication = db_data.get('indication') or 'ไม่ระบุ'
+            dosage = db_data.get('dosage_frequency') or 'ไม่ระบุ'
+            instruction = db_data.get('instruction_time') or 'ไม่ระบุ'
+            warning = db_data.get('precaution') or 'ไม่มี'
 
             flex_bubble = {
                 "type": "bubble",
@@ -364,9 +374,9 @@ def handle_image(event):
                         {"type": "text", "text": f"ชื่อยา: {generic_name}", "color": "#666666", "size": "sm", "wrap": True},
                         {"type": "separator", "margin": "md"},
                         {"type": "text", "text": f"🎯 ข้อบ่งใช้: {indication}", "wrap": True},
-                        {"type": "text", "text": f"⚖️ ขนาดยา: {dosage_frequency}", "wrap": True},
-                        {"type": "text", "text": f"⏱️ วิธีใช้: {instruction_time}", "weight": "bold", "color": "#E03131", "wrap": True},
-                        {"type": "text", "text": f"⚠️ คำเตือน: {precaution}", "size": "sm", "color": "#FFA500", "wrap": True}
+                        {"type": "text", "text": f"⚖️ ขนาดยา: {dosage}", "wrap": True},
+                        {"type": "text", "text": f"⏱️ วิธีใช้: {instruction}", "weight": "bold", "color": "#E03131", "wrap": True},
+                        {"type": "text", "text": f"⚠️ คำเตือน: {warning}", "size": "sm", "color": "#FFA500", "wrap": True}
                     ]
                 },
                 "footer": {
