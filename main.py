@@ -446,21 +446,33 @@ def handle_postback(event):
         )
 
 # ==========================================
-# เส้นทางสำหรับทดสอบ Database โดยเฉพาะ
+# เส้นทางสำหรับทดสอบ Database โดยเฉพาะ (ฉบับ Debug)
 # ==========================================
 @app.get("/test-db/{drug_name}")
 def test_database_connection(drug_name: str):
-    # เรียกใช้ฟังก์ชันค้นหาที่เราเพิ่งสร้างไว้
-    result = search_medicine_in_db(drug_name)
+    # 1. ปริ้นท์ค่า URL ออกมาดูใน Log ของ Render
+    print(f"🔗 [DEBUG] SUPABASE_URL ของคุณคือ: '{SUPABASE_URL}'")
     
-    if result:
-        return {
-            "status": "success", 
-            "message": "เชื่อมต่อ Supabase และค้นหาข้อมูลสำเร็จ!",
-            "data": result
-        }
-    else:
-        return {
-            "status": "not_found", 
-            "message": f"เชื่อมต่อสำเร็จ แต่ไม่พบข้อมูลของยา '{drug_name}' ในระบบ"
-        }
+    if not supabase:
+        return {"status": "error", "message": "ไม่ได้เชื่อมต่อ Supabase Client"}
+
+    try:
+        # 2. บังคับใช้ชื่อตาราง Medication_VQA
+        print(f"🔍 [DEBUG] กำลังค้นหา: {drug_name} ในตาราง Medication_VQA")
+        response = supabase.table('Medication_VQA').select('*').ilike('generic_name', f"%{drug_name}%").execute()
+        
+        if response.data and len(response.data) > 0:
+            return {
+                "status": "success", 
+                "message": "เย้! ดึงข้อมูลสำเร็จแล้ว",
+                "data": response.data[0]
+            }
+        else:
+            return {
+                "status": "not_found", 
+                "message": f"เชื่อมต่อสำเร็จ แต่ไม่พบข้อมูลของยา '{drug_name}'"
+            }
+            
+    except Exception as e:
+        print(f"❌ [DEBUG] ERROR DETAIL: {str(e)}")
+        return {"status": "error", "message": str(e)}
