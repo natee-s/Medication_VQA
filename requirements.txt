@@ -5,4 +5,4 @@ opencv-python-headless==4.9.0.80
 numpy==1.26.4
 requests==2.31.0
 google-genai
-supabase==2.4.5
+supabase
