@@ -218,8 +218,8 @@ def search_medicine_in_db(drug_name: str):
         return None
         
     try:
-        # 📌 อย่าลืมเปลี่ยนชื่อตาราง 'medicines' ให้ตรงกับชื่อที่คุณแมนตั้งไว้ใน Supabase นะครับ
-        response = supabase.table('medicines').select('*').ilike('generic_name', f"%{drug_name}%").execute()
+        # 📌 อย่าลืมเปลี่ยนชื่อตาราง 'Medication_VQA' ให้ตรงกับชื่อที่คุณแมนตั้งไว้ใน Supabase นะครับ
+        response = supabase.table('Medication_VQA').select('*').ilike('generic_name', f"%{drug_name}%").execute()
         
         if response.data and len(response.data) > 0:
             return response.data[0] # ส่งข้อมูลแถวแรกที่เจอแจ็กพอตกลับไป
