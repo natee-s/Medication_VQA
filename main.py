@@ -81,8 +81,8 @@ def check_image_quality(file_path):
         
         print(f"🔍 [TEST] ค่าพื้นที่วัตถุ: {object_area}, ค่าพื้นที่ภาพรวม: {total_area}, สัดส่วน: {object_area/total_area:.3f}")
         
-        if (object_area / total_area) < 0.15: # ปรับลดเกณฑ์ลงนิดหน่อยเหลือ 15% 
-            return False, "⚠️ รูปภาพอยู่ไกลเกินไป กรุณาถ่ายใกล้ๆ ให้ฉลากยาเต็มกรอบภาพครับ"
+        #if (object_area / total_area) < 0.15: # ปรับลดเกณฑ์ลงนิดหน่อยเหลือ 15% 
+            #return False, "⚠️ รูปภาพอยู่ไกลเกินไป กรุณาถ่ายใกล้ๆ ให้ฉลากยาเต็มกรอบภาพครับ"
 
     # 6. Auto-Deskew (แก้เอียงอัตโนมัติ 1-15 องศา)
     coords = np.column_stack(np.where(edges > 0))
@@ -218,8 +218,9 @@ def search_medicine_in_db(drug_name: str):
         return None
         
     try:
-        # 📌 อย่าลืมเปลี่ยนชื่อตาราง 'Medication_VQA' ให้ตรงกับชื่อที่คุณแมนตั้งไว้ใน Supabase นะครับ
-        response = supabase.table('Medication_VQA').select('*').ilike('generic_name', f"%{drug_name}%").execute()
+        # ใช้ .or_ เพื่อค้นหาชื่อยาจากทั้งคอลัมน์ generic_name และ trade_name
+        search_query = f"generic_name.ilike.%{drug_name}%,trade_name.ilike.%{drug_name}%"
+        response = supabase.table('Medication_VQA').select('*').or_(search_query).execute()
         
         if response.data and len(response.data) > 0:
             return response.data[0] # ส่งข้อมูลแถวแรกที่เจอแจ็กพอตกลับไป
@@ -263,20 +264,14 @@ def handle_image(event):
         return
 
     # ==========================================
-    # เฟส 2: ประมวลผลล้างรูปภาพ
+    # เฟส 2: ข้ามการประมวลผลล้างรูปภาพ (ส่งภาพสีต้นฉบับให้ AI)
     # ==========================================
-    processed_path = f"/tmp/processed_{event.message.id}.jpg"
-    process_pharmacy_label(temp_file_path, processed_path)
-
-    # โหลดรูปภาพที่ประมวลผลแล้วเตรียมส่งให้ Gemini
-    with open(processed_path, "rb") as image_file:
+    with open(temp_file_path, "rb") as image_file:
         image_bytes = image_file.read()
 
-    # ลบไฟล์ชั่วคราวทิ้งเพื่อประหยัดพื้นที่เซิร์ฟเวอร์
+    # ลบไฟล์ชั่วคราวทิ้งหลังอ่านเสร็จ
     if os.path.exists(temp_file_path):
         os.remove(temp_file_path)
-    if os.path.exists(processed_path):
-        os.remove(processed_path)
 
     # ==========================================
     # เฟส 3: เรียกใช้งาน Gemini + ค้นหาข้อมูลจริง (RAG)
@@ -463,3 +458,18 @@ def test_database_connection(drug_name: str):
     except Exception as e:
         print(f"❌ [DEBUG] ERROR DETAIL: {str(e)}")
         return {"status": "error", "message": str(e)}
+
+# ==========================================
+# 4. ฟังก์ชันจัดการเมื่อผู้ใช้ส่งข้อความ (Text) เข้ามา
+# ==========================================
+@handler.add(MessageEvent, message=TextMessage)
+def handle_text(event):
+    user_text = event.message.text
+    
+    # ดักจับข้อความพื้นฐานเบื้องต้น
+    line_bot_api.reply_message(
+        event.reply_token,
+        TextSendMessage(
+            text=f"คุณพิมพ์มาว่า: '{user_text}'\n\n📸 ขณะนี้ระบบบอทยังอยู่ในช่วงทดสอบ ฟังก์ชันหลักคือการอ่าน 'รูปภาพฉลากยา' รบกวนส่งรูปฉลากยามาให้ผมวิเคราะห์ได้เลยนะครับ!"
+        )
+    )
