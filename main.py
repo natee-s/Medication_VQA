@@ -434,3 +434,23 @@ def handle_postback(event):
             event.reply_token,
             TextSendMessage(text=reply_text)
         )
+
+# ==========================================
+# เส้นทางสำหรับทดสอบ Database โดยเฉพาะ
+# ==========================================
+@app.get("/test-db/{drug_name}")
+def test_database_connection(drug_name: str):
+    # เรียกใช้ฟังก์ชันค้นหาที่เราเพิ่งสร้างไว้
+    result = search_medicine_in_db(drug_name)
+    
+    if result:
+        return {
+            "status": "success", 
+            "message": "เชื่อมต่อ Supabase และค้นหาข้อมูลสำเร็จ!",
+            "data": result
+        }
+    else:
+        return {
+            "status": "not_found", 
+            "message": f"เชื่อมต่อสำเร็จ แต่ไม่พบข้อมูลของยา '{drug_name}' ในระบบ"
+        }
