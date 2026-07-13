@@ -16,6 +16,7 @@ from google import genai
 from google.genai import types
 import json
 import requests
+from supabase import create_client, Client
 
 # ==========================================
 # 1. ฟังก์ชันสร้างฟังก์ชันด่านหน้า (Gatekeeper)
@@ -58,20 +59,29 @@ def check_image_quality(file_path):
         return False, "⚠️ รูปภาพเบลอเกินไป กรุณาแตะโฟกัสที่กล้องให้ตัวหนังสือคมชัด แล้วถ่ายใหม่ครับ"
 
     # 5. ตรวจสอบระยะห่าง (Bounding Box Area)
-    edges = cv2.Canny(gray, 50, 150)
+    # เพิ่ม GaussianBlur เพื่อเบลอลายไม้บนโต๊ะและจุดรบกวนก่อนหาขอบ
+    blurred = cv2.GaussianBlur(gray, (11, 11), 0)
+    edges = cv2.Canny(blurred, 30, 100)
+    
     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if contours:
+    
+    # กรองเอาเฉพาะเส้นขอบที่มีขนาดใหญ่กว่า 500 พิกเซล (ลบขยะทิ้ง)
+    valid_contours = [cnt for cnt in contours if cv2.contourArea(cnt) > 500]
+    
+    if valid_contours:
         x_min, y_min = img.shape[1], img.shape[0]
         x_max, y_max = 0, 0
-        for cnt in contours:
+        for cnt in valid_contours:
             x, y, w, h = cv2.boundingRect(cnt)
             x_min, y_min = min(x_min, x), min(y_min, y)
             x_max, y_max = max(x_max, x + w), max(y_max, y + h)
         
         object_area = (x_max - x_min) * (y_max - y_min)
         total_area = img.shape[0] * img.shape[1]
-        print(f"🔍 [TEST] ค่าพื้นที่วัตถุ: {object_area}, ค่าพื้นที่ภาพรวม: {total_area}")
-        if (object_area / total_area) < 0.2:
+        
+        print(f"🔍 [TEST] ค่าพื้นที่วัตถุ: {object_area}, ค่าพื้นที่ภาพรวม: {total_area}, สัดส่วน: {object_area/total_area:.3f}")
+        
+        if (object_area / total_area) < 0.15: # ปรับลดเกณฑ์ลงนิดหน่อยเหลือ 15% 
             return False, "⚠️ รูปภาพอยู่ไกลเกินไป กรุณาถ่ายใกล้ๆ ให้ฉลากยาเต็มกรอบภาพครับ"
 
     # 6. Auto-Deskew (แก้เอียงอัตโนมัติ 1-15 องศา)
@@ -174,6 +184,53 @@ async def webhook(request: Request):
 
 
 # ==========================================
+# 2.1. การตั้งค่าเชื่อมต่อฐานข้อมูล Supabase
+# ==========================================
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+
+# ตรวจสอบเบื้องต้นว่ามีการตั้งค่า Key หรือยัง
+if not SUPABASE_URL or not SUPABASE_KEY:
+    print("⚠️ Warning: SUPABASE_URL หรือ SUPABASE_KEY ยังไม่ได้ตั้งค่าใน Environment Variables")
+
+# สร้าง Client สำหรับเชื่อมต่อฐานข้อมูล
+try:
+    # จะเริ่มสร้าง client ก็ต่อเมื่อมีค่าครบทั้งสองตัว
+    if SUPABASE_URL and SUPABASE_KEY:
+        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print("✅ เชื่อมต่อ Supabase สำเร็จ!")
+    else:
+        supabase = None
+except Exception as e:
+    print(f"❌ เชื่อมต่อ Supabase ไม่สำเร็จ: {e}")
+    supabase = None
+
+# ==========================================
+# ฟังก์ชันค้นหาข้อมูลยา (RAG Search)
+# ==========================================
+def search_medicine_in_db(drug_name: str):
+    """
+    ฟังก์ชันนี้จะรับชื่อยา (ที่ AI อ่านได้) มาค้นหาในฐานข้อมูล
+    เพื่อดึงข้อมูล Official กลับไปแสดงผล
+    """
+    if not supabase:
+        print("⚠️ สัญญาณการเชื่อมต่อ Supabase ไม่พร้อมใช้งาน")
+        return None
+        
+    try:
+        # 📌 อย่าลืมเปลี่ยนชื่อตาราง 'medicines' ให้ตรงกับชื่อที่คุณแมนตั้งไว้ใน Supabase นะครับ
+        response = supabase.table('medicines').select('*').ilike('generic_name', f"%{drug_name}%").execute()
+        
+        if response.data and len(response.data) > 0:
+            return response.data[0] # ส่งข้อมูลแถวแรกที่เจอแจ็กพอตกลับไป
+        else:
+            return None # ไม่พบข้อมูลในระบบ
+            
+    except Exception as e:
+        print(f"⚠️ เกิดข้อผิดพลาดในการค้นหาข้อมูล: {e}")
+        return None
+
+# ==========================================
 # 3. ระบบจัดการข้อความ (Text & Image)
 # ==========================================
 
@@ -241,19 +298,24 @@ def handle_image(event):
             model='gemini-2.5-flash',
             contents=[
                 types.Part.from_bytes(data=image_bytes, mime_type='image/jpeg'),
-                """นี่คือภาพฉลากยา 
-กฎสำคัญ:
-1. หากพบว่าตัวหนังสือในภาพตะแคงซ้าย/ขวา (90, 270 องศา) หรือ กลับหัว (180 องศา) ให้ตอบกลับมาเป็น JSON แบบนี้เท่านั้น: {"error": "rotated"} และห้ามตอบอย่างอื่น
-2. หากภาพตั้งตรงปกติ (0 องศา) กรุณาดึงข้อมูลและส่งกลับมาเป็นรูปแบบ JSON (ไม่ต้องมี Markdown หรือ Code block คร่อม) โดยใช้โครงสร้างดังนี้:
+                """คุณคือระบบ OCR สกัดข้อมูลจากฉลากยาที่มีความแม่นยำสูงสุด 
+
+กฎเหล็กระดับวิกฤต (ห้ามฝ่าฝืน):
+1. สกัดข้อมูลจาก "ตัวอักษรที่มองเห็นในภาพเท่านั้น" ห้ามคิดเอง ห้ามเติมคำ ห้ามแปลงหน่วย (เช่น ห้ามแปลงช้อนชาเป็น มล.) และห้ามนำความรู้ทางการแพทย์ภายนอกมาใช้เด็ดขาด
+2. หากไม่พบข้อมูลในหัวข้อนั้นบนฉลาก ให้ตอบ null ทันที ห้ามเดาเอาเอง
+3. ตรวจสอบทิศทางของภาพ หากภาพตะแคงหรือกลับหัว ให้ตอบ error ทันที
+
+กรุณาส่งกลับมาเป็น JSON ตามโครงสร้างนี้เท่านั้น:
 {
-"trade_name": "ชื่อทางการค้า หรือ ระบุ null หากไม่พบ",
-"generic_name": "ชื่อยา หรือ ระบุ null หากไม่พบ",
-"indication": "ข้อบ่งใช้ หรือ สรรพคุณ หรือ ระบุ null หากไม่พบ", 
-"dosage": "ขนาดยา หรือ ระบุ null หากไม่พบ",
-"instruction": "วิธีรับประทาน หรือ ระบุ null หากไม่พบ",
-"warning": "คำเตือน หรือ ระบุ null หากไม่พบ"
-}
-ห้ามมีข้อความอธิบายใดๆ เพิ่มเติม นอกเหนือจาก JSON object นี้"""
+  "image_orientation": "ระบุว่า normal, rotated_90, rotated_270, หรือ upside_down",
+  "error": "หาก image_orientation ไม่ใช่ normal ให้ใส่ค่า 'rotated' แต่ถ้าปกติให้ใส่ null",
+  "trade_name": "ชื่อทางการค้าที่ปรากฏในภาพ หรือ null",
+  "generic_name": "ชื่อยาสามัญที่ปรากฏในภาพ หรือ null",
+  "indication": "ข้อบ่งใช้ที่ปรากฏในภาพ หรือ null", 
+  "dosage_frequency": "ขนาดยาที่ปรากฏในภาพ หรือ null",
+  "instruction_time": "วิธีรับประทานที่ปรากฏในภาพครบทุกส่วน หรือ null",
+  "precaution": "คำเตือนที่ปรากฏในภาพ หรือ null"
+}"""
             ]
         )
         
@@ -278,9 +340,9 @@ def handle_image(event):
             trade_name = data.get('trade_name') or 'ไม่ระบุ'
             generic_name = data.get('generic_name') or 'ไม่ระบุ'
             indication = data.get('indication') or 'ไม่ระบุ'
-            dosage = data.get('dosage') or 'ไม่ระบุ'
-            instruction = data.get('instruction') or 'ไม่ระบุ'
-            warning = data.get('warning') or 'ไม่มี'
+            dosage_frequency = data.get('dosage_frequency') or 'ไม่ระบุ'
+            instruction_time = data.get('instruction_time') or 'ไม่ระบุ'
+            precaution = data.get('precaution') or 'ไม่มี'
 
             flex_bubble = {
                 "type": "bubble",
@@ -302,9 +364,9 @@ def handle_image(event):
                         {"type": "text", "text": f"ชื่อยา: {generic_name}", "color": "#666666", "size": "sm", "wrap": True},
                         {"type": "separator", "margin": "md"},
                         {"type": "text", "text": f"🎯 ข้อบ่งใช้: {indication}", "wrap": True},
-                        {"type": "text", "text": f"⚖️ ขนาดยา: {dosage}", "wrap": True},
-                        {"type": "text", "text": f"⏱️ วิธีใช้: {instruction}", "weight": "bold", "color": "#E03131", "wrap": True},
-                        {"type": "text", "text": f"⚠️ คำเตือน: {warning}", "size": "sm", "color": "#FFA500", "wrap": True}
+                        {"type": "text", "text": f"⚖️ ขนาดยา: {dosage_frequency}", "wrap": True},
+                        {"type": "text", "text": f"⏱️ วิธีใช้: {instruction_time}", "weight": "bold", "color": "#E03131", "wrap": True},
+                        {"type": "text", "text": f"⚠️ คำเตือน: {precaution}", "size": "sm", "color": "#FFA500", "wrap": True}
                     ]
                 },
                 "footer": {
