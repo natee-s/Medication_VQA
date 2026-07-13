@@ -230,6 +230,54 @@ def search_medicine_in_db(drug_name: str):
         print(f"⚠️ เกิดข้อผิดพลาดในการค้นหาข้อมูล: {e}")
         return None
 
+# ==========================================
+# 3. ฟังก์ชันหลัก: จัดการเมื่อมีผู้ใช้ส่งรูปภาพเข้ามา
+# ==========================================
+@handler.add(MessageEvent, message=ImageMessage)
+def handle_image(event):
+    # --- ส่งสถานะ "กำลังพิมพ์..." (Loading Animation) ---
+    url = "https://api.line.me/v2/bot/chat/loading/start"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"
+    }
+    data_loading = {"chatId": event.source.user_id, "loadingSeconds": 10}
+    requests.post(url, headers=headers, json=data_loading)
+
+    # --- ดาวน์โหลดรูปภาพจาก LINE ---
+    message_content = line_bot_api.get_message_content(event.message.id)
+    temp_file_path = f"/tmp/{event.message.id}.jpg"
+    
+    with open(temp_file_path, 'wb') as fd:
+        for chunk in message_content.iter_content():
+            fd.write(chunk)
+            
+    # ==========================================
+    # เฟส 1: ด่านตรวจ QC รูปภาพ
+    # ==========================================
+    is_good, qc_message = check_image_quality(temp_file_path)
+    if not is_good:
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=qc_message))
+        if os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+        return
+
+    # ==========================================
+    # เฟส 2: ประมวลผลล้างรูปภาพ
+    # ==========================================
+    processed_path = f"/tmp/processed_{event.message.id}.jpg"
+    process_pharmacy_label(temp_file_path, processed_path)
+
+    # โหลดรูปภาพที่ประมวลผลแล้วเตรียมส่งให้ Gemini
+    with open(processed_path, "rb") as image_file:
+        image_bytes = image_file.read()
+
+    # ลบไฟล์ชั่วคราวทิ้งเพื่อประหยัดพื้นที่เซิร์ฟเวอร์
+    if os.path.exists(temp_file_path):
+        os.remove(temp_file_path)
+    if os.path.exists(processed_path):
+        os.remove(processed_path)
+
     # ==========================================
     # เฟส 3: เรียกใช้งาน Gemini + ค้นหาข้อมูลจริง (RAG)
     # ==========================================
@@ -260,7 +308,7 @@ def search_medicine_in_db(drug_name: str):
         try:
             data = json.loads(raw_text)
             
-            # 🚨 ดักจับ Error รูปกลับหัวจาก Gemini
+            # 🚨 ดักจับ Error รูปกลับหัว
             if data.get("error") == "rotated":
                 line_bot_api.reply_message(
                     event.reply_token,
@@ -279,14 +327,13 @@ def search_medicine_in_db(drug_name: str):
             db_data = search_medicine_in_db(search_keyword)
 
             if not db_data:
-                # กรณีหาชื่อยาไม่เจอใน Database
                 line_bot_api.reply_message(
                     event.reply_token, 
                     TextSendMessage(text=f"🔍 ระบบสกัดชื่อยาได้ว่า '{search_keyword}' แต่ไม่พบข้อมูลนี้ในฐานข้อมูลครับ")
                 )
                 return
             
-            # ถ้าเจอข้อมูล ดึงข้อมูล Official จาก Database มาใช้ทำ Flex Message ทันที
+            # จัดเตรียมข้อมูลใส่ Flex Message
             trade_name = db_data.get('trade_name') or 'ไม่ระบุ'
             generic_name = db_data.get('generic_name') or 'ไม่ระบุ'
             indication = db_data.get('indication') or 'ไม่ระบุ'
@@ -349,7 +396,7 @@ def search_medicine_in_db(drug_name: str):
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"พบปัญหาในการจัดรูปแบบข้อมูลจาก AI:\n{raw_text}"))
             
     except Exception as e:
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"⚠️ เกิดข้อผิดพลาดในระบบประมวลผล: {str(e)}"))
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"⚠️ เกิดข้อผิดพลาดในระบบประมวลผล: {str(e)}"))    
 
 @handler.add(PostbackEvent)
 def handle_postback(event):
