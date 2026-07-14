@@ -17,6 +17,7 @@ from google.genai import types
 import json
 import requests
 from supabase import create_client, Client
+from urllib.parse import parse_qsl
 
 # ==========================================
 # 1. ฟังก์ชันสร้างฟังก์ชันด่านหน้า (Gatekeeper)
@@ -396,6 +397,7 @@ def handle_image(event):
 @handler.add(PostbackEvent)
 def handle_postback(event):
     data = event.postback.data
+    user_id = event.source.user_id
 
     # ----------------------------------------
     # กรณีที่ 1: ผู้ใช้กดปุ่ม "✅ รับทราบ"
@@ -414,18 +416,36 @@ def handle_postback(event):
         parts = data.split("&drug=")
         drug_name = parts[1] if len(parts) > 1 else "ยาของคุณ"
 
-        # ดึง User ID เตรียมเอาไปผูกกับตาราง Database
-        user_id = event.source.user_id
-
         print(f"เตรียมบันทึกข้อมูลลง DB: User={user_id}, Drug={drug_name}")
 
-        # ตอบกลับผู้ใช้
-        reply_text = f"⏰ ตั้งเวลาเตือนสำหรับยา {drug_name} เรียบร้อยครับ!\n(ระบบจะเชื่อมต่อฐานข้อมูลในเฟสถัดไป)"
+        try:
+            # 1. เช็คก่อนว่ามี User คนนี้ในตาราง user_profiles หรือยัง
+            user_check = supabase.table("user_profiles").select("line_uid").eq("line_uid", user_id).execute()
+            if not user_check.data:
+                # ถ้ายังไม่มี ให้สร้างโปรไฟล์ใหม่ (เวลา default จะถูกสร้างให้อัตโนมัติใน DB)
+                supabase.table("user_profiles").insert({"line_uid": user_id}).execute()
 
-        line_bot_api.reply_message(
-            event.reply_token,
-            TextSendMessage(text=reply_text)
-        )
+            # 2. บันทึกข้อมูลการตั้งเตือนลงตาราง reminder_schedules
+            reminder_payload = {
+                "line_uid": user_id,
+                "drug_name": drug_name,
+                "is_active": True
+            }
+            supabase.table("reminder_schedules").insert(reminder_payload).execute()
+
+            # 3. ตอบกลับผู้ใช้เมื่อบันทึกสำเร็จ
+            reply_text = f"⏰ ตั้งเวลาเตือนสำหรับยา {drug_name} ลงในระบบเรียบร้อยครับ!"
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text=reply_text)
+            )
+            
+        except Exception as e:
+            print(f"Error saving reminder: {e}")
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="❌ เกิดข้อผิดพลาดในการบันทึกข้อมูลลงฐานข้อมูล กรุณาลองใหม่อีกครั้ง")
+            )
 
 # ==========================================
 # เส้นทางสำหรับทดสอบ Database โดยเฉพาะ (ฉบับ Debug)
