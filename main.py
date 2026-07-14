@@ -413,7 +413,6 @@ def handle_image(event):
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"⚠️ เกิดข้อผิดพลาดในระบบประมวลผล: {str(e)}"))    
 
 @handler.add(PostbackEvent)
-@handler.add(PostbackEvent)
 def handle_postback(event):
     data = event.postback.data
     user_id = event.source.user_id
@@ -431,27 +430,27 @@ def handle_postback(event):
     # กรณีที่ 2: ผู้ใช้กดปุ่ม "⏰ ตั้งเตือนกินยา"
     # ----------------------------------------
     elif data.startswith("action=set_reminder"):
-        # ใช้ parse_qsl เพื่อแกะ data แบบ URL (เช่น action=set_reminder&drug=A&time=bedtime)
+        # ใช้ parse_qsl แกะข้อมูลที่ถูกส่งมา (เช่น action=set_reminder&drug=Para&time=morning)
         postback_dict = dict(parse_qsl(data))
         
         drug_name = postback_dict.get("drug", "ยาของคุณ")
-        time_str = postback_dict.get("time", "") # ดึงค่าเวลาออกมา เช่น "bedtime" หรือ "morning,evening"
+        time_str = postback_dict.get("time", "")
 
         print(f"เตรียมบันทึกข้อมูลลง DB: User={user_id}, Drug={drug_name}, Time={time_str}")
 
-        # ตรวจสอบว่ามื้อไหนถูกส่งมาบ้าง ถ้ามีให้ตั้งค่าเป็น True
+        # เช็กว่ามีคำว่าเช้า กลางวัน เย็น หรือก่อนนอน ไหม
         is_morning = "morning" in time_str
         is_noon = "noon" in time_str
         is_evening = "evening" in time_str
         is_bedtime = "bedtime" in time_str
 
         try:
-            # 1. เช็คก่อนว่ามี User คนนี้ในตาราง user_profiles หรือยัง
+            # 1. เช็คว่ามี User ใน DB หรือยัง
             user_check = supabase.table("user_profiles").select("line_uid").eq("line_uid", user_id).execute()
             if not user_check.data:
                 supabase.table("user_profiles").insert({"line_uid": user_id}).execute()
 
-            # 2. บันทึกข้อมูลการตั้งเตือน พร้อมระบุมื้อยา
+            # 2. บันทึกข้อมูลตั้งเตือน พร้อมเวลาที่ดึงมาได้
             reminder_payload = {
                 "line_uid": user_id,
                 "drug_name": drug_name,
