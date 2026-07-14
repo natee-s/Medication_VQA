@@ -349,6 +349,10 @@ def handle_image(event):
             
             # รวมเป็น text เช่น "morning,bedtime" ถ้าไม่มีให้ส่ง "none"
             time_payload = ",".join(time_list) if time_list else "none"
+
+            # 👇 เพิ่ม 2 บรรทัดนี้เข้าไปเพื่อดูค่าในหน้า Log ของ Render 👇
+            print(f"🔍 [DEBUG] ข้อความวิธีใช้จาก DB: {instruction}")
+            print(f"🔍 [DEBUG] Time Payload ที่สร้างได้: {time_payload}")
             # ----------------------------------------------------
 
             flex_bubble = {
