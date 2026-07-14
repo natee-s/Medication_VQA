@@ -337,6 +337,20 @@ def handle_image(event):
             instruction = db_data.get('instruction_time') or 'ไม่ระบุ'
             warning = db_data.get('precaution') or 'ไม่มี'
 
+            # ----------------------------------------------------
+            # 🎯 เพิ่มลอจิกวิเคราะห์เวลากินยาจากข้อความ instruction
+            # ----------------------------------------------------
+            time_list = []
+            if instruction != 'ไม่ระบุ':
+                if 'เช้า' in instruction: time_list.append('morning')
+                if 'กลางวัน' in instruction or 'เที่ยง' in instruction: time_list.append('noon')
+                if 'เย็น' in instruction: time_list.append('evening')
+                if 'นอน' in instruction: time_list.append('bedtime')
+            
+            # รวมเป็น text เช่น "morning,bedtime" ถ้าไม่มีให้ส่ง "none"
+            time_payload = ",".join(time_list) if time_list else "none"
+            # ----------------------------------------------------
+
             flex_bubble = {
                 "type": "bubble",
                 "size": "mega",
@@ -377,7 +391,7 @@ def handle_image(event):
                             "type": "button",
                             "style": "secondary",
                             "height": "sm",
-                            "action": {"type": "postback", "label": "✅ รับทราบ", "data": "action=acknowledge"}
+                            "action": {"type": "postback", "label": "⏰ ตั้งเตือนกินยา", "data": f"action=set_reminder&drug={generic_name}&time={time_payload}"}
                         }
                     ]
                 }
@@ -394,6 +408,7 @@ def handle_image(event):
     except Exception as e:
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"⚠️ เกิดข้อผิดพลาดในระบบประมวลผล: {str(e)}"))    
 
+@handler.add(PostbackEvent)
 @handler.add(PostbackEvent)
 def handle_postback(event):
     data = event.postback.data
@@ -412,28 +427,39 @@ def handle_postback(event):
     # กรณีที่ 2: ผู้ใช้กดปุ่ม "⏰ ตั้งเตือนกินยา"
     # ----------------------------------------
     elif data.startswith("action=set_reminder"):
-        # สกัดเอาชื่อยาออกมาจาก payload
-        parts = data.split("&drug=")
-        drug_name = parts[1] if len(parts) > 1 else "ยาของคุณ"
+        # ใช้ parse_qsl เพื่อแกะ data แบบ URL (เช่น action=set_reminder&drug=A&time=bedtime)
+        postback_dict = dict(parse_qsl(data))
+        
+        drug_name = postback_dict.get("drug", "ยาของคุณ")
+        time_str = postback_dict.get("time", "") # ดึงค่าเวลาออกมา เช่น "bedtime" หรือ "morning,evening"
 
-        print(f"เตรียมบันทึกข้อมูลลง DB: User={user_id}, Drug={drug_name}")
+        print(f"เตรียมบันทึกข้อมูลลง DB: User={user_id}, Drug={drug_name}, Time={time_str}")
+
+        # ตรวจสอบว่ามื้อไหนถูกส่งมาบ้าง ถ้ามีให้ตั้งค่าเป็น True
+        is_morning = "morning" in time_str
+        is_noon = "noon" in time_str
+        is_evening = "evening" in time_str
+        is_bedtime = "bedtime" in time_str
 
         try:
             # 1. เช็คก่อนว่ามี User คนนี้ในตาราง user_profiles หรือยัง
             user_check = supabase.table("user_profiles").select("line_uid").eq("line_uid", user_id).execute()
             if not user_check.data:
-                # ถ้ายังไม่มี ให้สร้างโปรไฟล์ใหม่ (เวลา default จะถูกสร้างให้อัตโนมัติใน DB)
                 supabase.table("user_profiles").insert({"line_uid": user_id}).execute()
 
-            # 2. บันทึกข้อมูลการตั้งเตือนลงตาราง reminder_schedules
+            # 2. บันทึกข้อมูลการตั้งเตือน พร้อมระบุมื้อยา
             reminder_payload = {
                 "line_uid": user_id,
                 "drug_name": drug_name,
-                "is_active": True
+                "is_active": True,
+                "morning": is_morning,
+                "noon": is_noon,
+                "evening": is_evening,
+                "bedtime": is_bedtime
             }
             supabase.table("reminder_schedules").insert(reminder_payload).execute()
 
-            # 3. ตอบกลับผู้ใช้เมื่อบันทึกสำเร็จ
+            # 3. ตอบกลับผู้ใช้
             reply_text = f"⏰ ตั้งเวลาเตือนสำหรับยา {drug_name} ลงในระบบเรียบร้อยครับ!"
             line_bot_api.reply_message(
                 event.reply_token,
@@ -446,7 +472,7 @@ def handle_postback(event):
                 event.reply_token,
                 TextSendMessage(text="❌ เกิดข้อผิดพลาดในการบันทึกข้อมูลลงฐานข้อมูล กรุณาลองใหม่อีกครั้ง")
             )
-
+            
 # ==========================================
 # เส้นทางสำหรับทดสอบ Database โดยเฉพาะ (ฉบับ Debug)
 # ==========================================
