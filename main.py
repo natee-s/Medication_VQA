@@ -752,7 +752,7 @@ def handle_text_message(event):
             กฎเหล็ก: ตอบคำสำคัญคำเดียวสั้นๆ ห้ามมีเครื่องหมายคำพูด ห้ามมีมาร์กดาวน์ ห้ามมีน้ำเด็ดขาด
             """
             keyword_res = client.models.generate_content(
-                model='gemini-2.0-flash', # ⚠️ ตรวจสอบชื่อ Model ให้ตรงกับของคุณแมน
+                model='gemini-2.5-flash', # ⚠️ แก้เป็น 2.5 ให้ตรงกับระบบหลัก
                 contents=[extract_prompt, f"ข้อความ: {user_text}"]
             )
             # เคลียร์เครื่องหมายหรือช่องว่างแปลกๆ ที่ AI อาจแถมมา
@@ -760,10 +760,13 @@ def handle_text_message(event):
             print(f"🔍 [RAG] Keyword สำหรับค้นหา: {keyword}")
 
             # 3.2 ค้นหาข้อมูลควบทั้งคอลัมน์ rag_text และ indication ด้วยคำสั่ง .or_()
-            db_res = supabase.table("Medication_VQA") \
-                .select("trade_name, rag_text") \
-                .or_(f"rag_text.ilike.%{keyword}%,indication.ilike.%{keyword}%") \
+            # ⚠️ แก้ไขเครื่องหมาย \ เป็นการใช้วงเล็บ () ครอบคำสั่งแทน เพื่อป้องกัน SyntaxError
+            db_res = (
+                supabase.table("Medication_VQA")
+                .select("trade_name, rag_text")
+                .or_(f"rag_text.ilike.%{keyword}%,indication.ilike.%{keyword}%")
                 .execute()
+            )
             records = db_res.data
 
             if records:
@@ -786,7 +789,7 @@ def handle_text_message(event):
                 """
                 
                 final_res = client.models.generate_content(
-                    model='gemini-2.0-flash', # ⚠️ ตรวจสอบชื่อ Model ให้ตรงกับของคุณแมน
+                    model='gemini-2.5-flash', # ⚠️ แก้เป็น 2.5 ให้ตรงกับระบบหลัก
                     contents=[final_prompt]
                 )
                 reply_text = final_res.text.strip()
@@ -794,6 +797,14 @@ def handle_text_message(event):
             else:
                 reply_text = f"ขออภัยครับคุณลูกค้า จากข้อมูลของร้านบ้านยาสุขใจ ตอนนี้ผมยังไม่พบข้อมูลที่เกี่ยวกับ '{keyword}' ครับ รบกวนทักสอบถามเภสัชกรที่หน้าร้านได้เลยนะครับ 👨‍⚕️"
             
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+            
+        elif "STORE_INFO" in intent:
+            reply_text = "🏠 ร้านบ้านยาสุขใจ ตั้งอยู่ที่ อ.หนองแค จ.สระบุรี เปิดให้บริการทุกวันครับ สอบถามเส้นทางเพิ่มเติมแจ้งได้เลยครับ"
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+            
+        else:
+            reply_text = "สวัสดีครับ บ้านยาสุขใจยินดีให้บริการครับ วันนี้มีอะไรให้ผมช่วยดูแลไหมครับ? 😊"
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
             
         elif "STORE_INFO" in intent:
