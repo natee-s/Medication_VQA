@@ -744,7 +744,7 @@ def handle_text_message(event):
             # 3.1 สกัดคำค้นหา (Keyword) จากข้อความของลูกค้า
             extract_prompt = "ดึงคำสำคัญที่เป็น 'อาการป่วย' หรือ 'ชื่อยา' จากข้อความต่อไปนี้ เพื่อนำไปค้นหาในฐานข้อมูล ตอบแค่คำสำคัญคำเดียวสั้นๆ ห้ามมีน้ำ"
             keyword_res = client.models.generate_content(
-                model='gemini-2.0-flash', # ⚠️ เปลี่ยนชื่อ Model ให้ตรงกับของคุณแมน
+                model='gemini-2.5-flash', # ⚠️ เปลี่ยนชื่อ Model ให้ตรงกับของคุณแมน
                 contents=[extract_prompt, f"ข้อความ: {user_text}"]
             )
             keyword = keyword_res.text.strip()
@@ -775,7 +775,7 @@ def handle_text_message(event):
                 """
                 
                 final_res = client.models.generate_content(
-                    model='gemini-2.0-flash', # ⚠️ เปลี่ยนชื่อ Model ให้ตรงกับของคุณแมน
+                    model='gemini-2.5-flash', # ⚠️ เปลี่ยนชื่อ Model ให้ตรงกับของคุณแมน
                     contents=[final_prompt]
                 )
                 reply_text = final_res.text.strip()
