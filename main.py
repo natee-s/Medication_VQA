@@ -588,6 +588,39 @@ def handle_postback(event):
                 TextSendMessage(text="❌ เกิดข้อผิดพลาดในการบันทึกข้อมูลลงฐานข้อมูล กรุณาลองใหม่อีกครั้ง")
             )
             
+    # ----------------------------------------
+    # กรณีที่ 3: ผู้ใช้กดปุ่มจาก Flex Message แจ้งเตือนกินยา (กินยาแล้ว / เลื่อน / หยุดเตือน)
+    # ----------------------------------------
+    elif data.startswith("action=take_pill") or data.startswith("action=snooze") or data.startswith("action=stop_reminder"):
+        postback_dict = dict(parse_qsl(data))
+        action = postback_dict.get("action")
+        meal = postback_dict.get("meal", "")
+
+        # แปลงชื่อมื้อยาเป็นภาษาไทยเพื่อใช้ตอบกลับ
+        meal_th = {"morning": "เช้า", "noon": "กลางวัน", "evening": "เย็น", "bedtime": "ก่อนนอน"}.get(meal, "")
+
+        if action == "take_pill":
+            # ตอบกลับเมื่อคนไข้กดว่า "กินยาแล้ว" (ในอนาคตสามารถเก็บสถิติลงตาราง Log ได้)
+            reply_text = f"✅ เก่งมากครับ! บันทึกการทานยามื้อ{meal_th} เรียบร้อยแล้ว ขอให้สุขภาพแข็งแรงนะครับ 💙"
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+            
+        elif action == "snooze":
+            # ตอบกลับเมื่อคนไข้ขอเลื่อนเวลา (เพื่อความเรียบง่ายในเฟสนี้ เราจะใช้ข้อความตอบรับไปก่อน)
+            reply_text = f"💤 รับทราบครับ ถ้าพร้อมทานยาแล้ว อย่าลืมหยิบมาทานนะครับ"
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+            
+        elif action == "stop_reminder":
+            try:
+                # เข้าไปอัปเดตสถานะในตาราง reminder_schedules ให้ยาในมื้อนี้ ใช้งานไม่ได้ (is_active = False)
+                supabase.table("reminder_schedules").update({"is_active": False}).eq("line_uid", user_id).eq(meal, True).execute()
+                
+                reply_text = f"⏹️ ปิดการแจ้งเตือนสำหรับยามื้อ{meal_th} เรียบร้อยแล้วครับ"
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+            except Exception as e:
+                print(f"Error stopping reminder: {e}")
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text="❌ เกิดข้อผิดพลาดในการปิดแจ้งเตือนครับ"))
+
+
 # ==========================================
 # เส้นทางสำหรับทดสอบ Database โดยเฉพาะ (ฉบับ Debug)
 # ==========================================
