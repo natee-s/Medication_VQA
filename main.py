@@ -739,23 +739,6 @@ def handle_text_message(event):
         print(f"🧠 [NLP] วิเคราะห์ข้อความ -> Intent: {intent}")
         
         # 3. 🔀 Router: ส่งข้อความตอบกลับเบื้องต้นตาม Intent
-        # 3. 🔀 Router: ส่งข้อความตอบกลับเบื้องต้นตาม Intent
-        :
-            # 3.1 สกัดคำค้นหา (Keyword) จากข้อความของลูกค้า
-            extract_prompt = "ดึงคำสำคัญที่เป็น 'อาการป่วย' หรือ 'ชื่อยา' จากข้อความต่อไปนี้ เพื่อนำไปค้นหาในฐานข้อมูล ตอบแค่คำสำคัญคำเดียวสั้นๆ ห้ามมีน้ำ"
-            keyword_res = client.models.generate_content(
-                model='gemini-2.5-flash', # ⚠️ เปลี่ยนชื่อ Model ให้ตรงกับของคุณแมน
-                contents=[extract_prompt, f"ข้อความ: {user_text}"]
-            )
-            keyword = keyword_res.text.strip()
-            print(f"🔍 [RAG] Keyword สำหรับค้นหา: {keyword}")
-
-            # 3.2 ค้นหาข้อมูลยาใน Supabase (ใช้ตาราง Medication_VQA)
-            # ค้นหาคำที่ตรงกันในคอลัมน์ rag_text หรือ indication
-            db_res = supabase.table("Medication_VQA").select("trade_name, rag_text").ilike("rag_text", f"%{keyword}%").execute()
-            records = db_res.data
-
-            # 3. 🔀 Router: ส่งข้อความตอบกลับเบื้องต้นตาม Intent
         if "MED_QUERY" in intent:
             # 3.1 สกัดคำค้นหา (Keyword) ให้เป็นคำหลักสั้นๆ (Root Word) เพื่อเพิ่มโอกาสการค้นหาเจอ
             extract_prompt = """
@@ -819,7 +802,7 @@ def handle_text_message(event):
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
             
         else:
-            # ...(โค้ด GENEif "MED_QUERY" in intentRAL ของเดิม)...
+            # ...(โค้ด GENERAL ของเดิม)...
             reply_text = "สวัสดีครับ บ้านยาสุขใจยินดีให้บริการครับ วันนี้มีอะไรให้ผมช่วยดูแลไหมครับ? 😊"
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
         
