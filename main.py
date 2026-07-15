@@ -218,11 +218,62 @@ def check_reminder():
                     drug_names = [d["drug_name"] for d in drugs]
                     drugs_text = "\n- ".join(drug_names)
                     
-                    # 5. ส่ง LINE Push Message (ดึงข้อความยาที่มัดรวมกันแล้วส่งไปทีเดียว)
-                    msg = f"🔔 ได้เวลากินยา {meal_name_th} แล้วครับ!\n\nรายการยา:\n- {drugs_text}\n\nทานยาแล้วอย่าลืมดื่มน้ำเยอะๆ นะครับ 💙"
-                    
-                    line_bot_api.push_message(uid, TextSendMessage(text=msg))
-                    print(f"✅ ส่งแจ้งเตือนให้ {uid} สำเร็จ (ยา {len(drugs)} รายการ)")
+                    # 5. ส่งแจ้งเตือนแบบ Flex Message พร้อมปุ่มโต้ตอบ
+                    flex_alert = {
+                        "type": "bubble",
+                        "size": "mega",
+                        "header": {
+                            "type": "box",
+                            "layout": "vertical",
+                            "backgroundColor": "#FFC107", # สีเหลืองแจ้งเตือน
+                            "contents": [
+                                {"type": "text", "text": "🔔 ได้เวลากินยาแล้วครับ!", "weight": "bold", "size": "lg", "color": "#FFFFFF"}
+                            ]
+                        },
+                        "body": {
+                            "type": "box",
+                            "layout": "vertical",
+                            "spacing": "md",
+                            "contents": [
+                                {"type": "text", "text": f"มื้อ: {meal_name_th}", "weight": "bold", "size": "md", "color": "#1DB446"},
+                                {"type": "text", "text": "รายการยาที่ต้องทาน:", "size": "sm", "color": "#666666"},
+                                {"type": "text", "text": drugs_text, "wrap": True, "weight": "bold"}
+                            ]
+                        },
+                        "footer": {
+                            "type": "box",
+                            "layout": "vertical",
+                            "spacing": "sm",
+                            "contents": [
+                                {
+                                    "type": "button",
+                                    "style": "primary",
+                                    "color": "#1DB446",
+                                    "height": "sm",
+                                    "action": {"type": "postback", "label": "✅ กินยาแล้ว", "data": f"action=take_pill&meal={meal_to_take}"}
+                                },
+                                {
+                                    "type": "button",
+                                    "style": "secondary",
+                                    "height": "sm",
+                                    "action": {"type": "postback", "label": "💤 เลื่อน 15 นาที", "data": f"action=snooze&meal={meal_to_take}"}
+                                },
+                                {
+                                    "type": "button",
+                                    "style": "link",
+                                    "color": "#E03131",
+                                    "height": "sm",
+                                    "action": {"type": "postback", "label": "⏹️ หยุดเตือนมื้อนี้", "data": f"action=stop_reminder&meal={meal_to_take}"}
+                                }
+                            ]
+                        }
+                    }
+
+                    line_bot_api.push_message(
+                        uid, 
+                        FlexSendMessage(alt_text=f"เตือนกินยา: {meal_name_th}", contents=flex_alert)
+                    )
+                    print(f"✅ ส่ง Flex Message แจ้งเตือนให้ {uid} สำเร็จ (ยา {len(drugs)} รายการ)")
                     count_messages_sent += 1
 
         return {"status": "success", "message": f"เช็กเวลา {current_time} น. สำเร็จ ส่งแจ้งเตือนไป {count_messages_sent} รายการ"}
