@@ -389,13 +389,13 @@ def handle_image(event):
                             "type": "button",
                             "style": "primary",
                             "height": "sm",
-                            "action": {"type": "postback", "label": "⏰ ตั้งเตือนกินยา", "data": f"action=set_reminder&drug={generic_name}"}
+                            "action": {"type": "postback", "label": "⏰ ตั้งเตือนกินยา", "data": f"action=set_reminder&drug={generic_name}&time={time_payload}"}
                         },
                         {
                             "type": "button",
                             "style": "secondary",
                             "height": "sm",
-                            "action": {"type": "postback", "label": "⏰ ตั้งเตือนกินยา", "data": f"action=set_reminder&drug={generic_name}&time={time_payload}"}
+                            "action": {"type": "postback", "label": "✅ รับทราบ", "data": "action=acknowledge"}
                         }
                     ]
                 }
