@@ -614,36 +614,38 @@ def handle_postback(event):
             )
             
     # ----------------------------------------
-    # กรณีที่ 3: ผู้ใช้กดปุ่มจาก Flex Message แจ้งเตือนกินยา (กินยาแล้ว / เลื่อน / หยุดเตือน)
+    # กรณีที่ 3: ผู้ใช้กดปุ่มจาก Flex Message แจ้งเตือนกินยา
     # ----------------------------------------
-    elif data.startswith("action=take_pill") or data.startswith("action=snooze") or data.startswith("action=stop_reminder"):
+    elif data.startswith("action=take_pill") or data.startswith("action=snooze") or data.startswith("action=stop_drug"):
         postback_dict = dict(parse_qsl(data))
         action = postback_dict.get("action")
-        meal = postback_dict.get("meal", "")
 
-        # แปลงชื่อมื้อยาเป็นภาษาไทยเพื่อใช้ตอบกลับ
-        meal_th = {"morning": "เช้า", "noon": "กลางวัน", "evening": "เย็น", "bedtime": "ก่อนนอน"}.get(meal, "")
+        if action == "stop_drug":
+            # 🎯 ลอจิก: ปิดการแจ้งเตือนยาทีละตัว (ทุกมื้อ)
+            drug_name = postback_dict.get("drug", "")
+            try:
+                # อัปเดตให้ยาตัวนี้ is_active = False ในฐานข้อมูล
+                supabase.table("reminder_schedules").update({"is_active": False}).eq("line_uid", user_id).eq("drug_name", drug_name).execute()
+                
+                reply_text = f"⏹️ ระบบได้บันทึกว่า {drug_name} หมดแล้ว และจะหยุดการแจ้งเตือนยารายการนี้ครับ"
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+                print(f"✅ ยกเลิกการแจ้งเตือนยา {drug_name} ให้ผู้ใช้ {user_id} สำเร็จ")
+            except Exception as e:
+                print(f"❌ Error stopping drug reminder: {e}")
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text="❌ เกิดข้อผิดพลาดในการยกเลิกแจ้งเตือนครับ"))
 
-        if action == "take_pill":
-            # ตอบกลับเมื่อคนไข้กดว่า "กินยาแล้ว" (ในอนาคตสามารถเก็บสถิติลงตาราง Log ได้)
-            reply_text = f"✅ เก่งมากครับ! บันทึกการทานยามื้อ{meal_th} เรียบร้อยแล้ว ขอให้สุขภาพแข็งแรงนะครับ 💙"
+        elif action == "take_pill":
+            # 🎯 ลอจิก: ตอบรับเมื่อกดกินยาทั้งหมด
+            meal = postback_dict.get("meal", "")
+            meal_th = {"morning": "เช้า", "noon": "กลางวัน", "evening": "เย็น", "bedtime": "ก่อนนอน"}.get(meal, "")
+            
+            reply_text = f"✅ ยอดเยี่ยมมากครับ! บันทึกการทานยามื้อ{meal_th} เรียบร้อยแล้ว ขอให้สุขภาพแข็งแรงนะครับ 💙"
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
             
         elif action == "snooze":
-            # ตอบกลับเมื่อคนไข้ขอเลื่อนเวลา (เพื่อความเรียบง่ายในเฟสนี้ เราจะใช้ข้อความตอบรับไปก่อน)
-            reply_text = f"💤 รับทราบครับ ถ้าพร้อมทานยาแล้ว อย่าลืมหยิบมาทานนะครับ"
+            # 🎯 ลอจิก: ตอบรับการเลื่อน (เฟสนี้ใช้ข้อความตอบรับไปก่อน)
+            reply_text = f"💤 รับทราบครับ เลื่อนการแจ้งเตือนออกไป 15 นาที ถ้าพร้อมทานยาแล้ว อย่าลืมหยิบมาทานนะครับ"
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
-            
-        elif action == "stop_reminder":
-            try:
-                # เข้าไปอัปเดตสถานะในตาราง reminder_schedules ให้ยาในมื้อนี้ ใช้งานไม่ได้ (is_active = False)
-                supabase.table("reminder_schedules").update({"is_active": False}).eq("line_uid", user_id).eq(meal, True).execute()
-                
-                reply_text = f"⏹️ ปิดการแจ้งเตือนสำหรับยามื้อ{meal_th} เรียบร้อยแล้วครับ"
-                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
-            except Exception as e:
-                print(f"Error stopping reminder: {e}")
-                line_bot_api.reply_message(event.reply_token, TextSendMessage(text="❌ เกิดข้อผิดพลาดในการปิดแจ้งเตือนครับ"))
 
 
 # ==========================================
