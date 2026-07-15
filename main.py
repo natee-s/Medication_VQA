@@ -171,11 +171,31 @@ def check_reminder():
     bkk_tz = pytz.timezone('Asia/Bangkok')
     now_bkk = datetime.now(bkk_tz)
     current_time = now_bkk.strftime("%H:%M") # จะได้ออกมาเป็นข้อความ เช่น '08:30'
-    print(f"⏰ [CRON] รันระบบตรวจสอบแจ้งเตือนเวลา: {current_time} น.")
+    #print(f"⏰ [CRON] รันระบบตรวจสอบแจ้งเตือนเวลา: {current_time} น.")
 
     try:
-        # 2. ดึงข้อมูลเวลามาตรฐานของผู้ใช้ทุกคน
-        users_res = supabase.table("user_profiles").select("*").execute()
+        # 2. ค้นหาเฉพาะลูกค้าที่ถึงเวลากินยาในนาทีนี้ (ลดภาระ Database)
+        current_time_db = f"{current_time}:00" # เติมวินาทีให้ตรงกับฟอร์แมตเวลาใน DB (เช่น 08:00:00)
+        
+        # 2.1 สร้างเงื่อนไขค้นหาเวลาที่ระบุไว้
+        or_conditions = [
+            f"default_morning.eq.{current_time_db}",
+            f"default_noon.eq.{current_time_db}",
+            f"default_evening.eq.{current_time_db}",
+            f"default_bedtime.eq.{current_time_db}"
+        ]
+        
+        # 2.2 ดักจับคนที่เป็นค่าว่าง (NULL) ให้ใช้เวลามาตรฐานของร้าน
+        if current_time == "08:00": or_conditions.append("default_morning.is.null")
+        if current_time == "12:00": or_conditions.append("default_noon.is.null")
+        if current_time == "18:00": or_conditions.append("default_evening.is.null")
+        if current_time == "21:00": or_conditions.append("default_bedtime.is.null")
+        
+        # 2.3 รวมเงื่อนไขทั้งหมดเข้าด้วยกัน
+        query_string = ",".join(or_conditions)
+        
+        # 2.4 ยิงคำสั่งให้ Supabase กรองมาให้เลย
+        users_res = supabase.table("user_profiles").select("*").or_(query_string).execute()
         users = users_res.data
         
         count_messages_sent = 0
@@ -300,6 +320,8 @@ def check_reminder():
                     )
                     print(f"✅ ส่ง Flex Message แจ้งเตือนให้ {uid} สำเร็จ (ยา {len(drugs)} รายการ)")
                     count_messages_sent += 1
+        if count_messages_sent > 0:
+            print(f"🎉 [CRON-SUCCESS] เวลา {current_time} น. | ส่งแจ้งเตือนกินยาสำเร็จ {count_messages_sent} รายการ")
 
         return {"status": "success", "message": f"เช็กเวลา {current_time} น. สำเร็จ ส่งแจ้งเตือนไป {count_messages_sent} รายการ"}
 
