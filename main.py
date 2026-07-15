@@ -725,6 +725,8 @@ def handle_text_message(event):
     """
     
     try:
+        # สร้างตัว client ขึ้นมาใหม่ โดยดึง API Key จาก Environment Variable
+        client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
         # 2. 🧠 เรียกใช้ Gemini Model แบบ Text
         # (ตรวจสอบให้แน่ใจว่าได้ประกาศ genai.configure(api_key=...) ไว้ด้านบนแล้ว)
         response = client.models.generate_content(
