@@ -18,6 +18,8 @@ import json
 import requests
 from supabase import create_client, Client
 from urllib.parse import parse_qsl
+from datetime import datetime
+import pytz
 
 # ==========================================
 # 1. ฟังก์ชันสร้างฟังก์ชันด่านหน้า (Gatekeeper)
@@ -162,13 +164,72 @@ def root():
 
 @app.get("/cron/check-reminder")
 def check_reminder():
-    # 📌 ในอนาคตเราจะเขียนโค้ดตรงนี้เพื่อ:
-    # 1. ค้นหา Database ว่ามีผู้ใช้คนไหนถึงเวลากินยาหรือยัง
-    # 2. ใช้ line_bot_api.push_message() ส่งแจ้งเตือน
-    
-    print("🔔 Cron job is triggered! Server is awake & Checking reminders...")
-    
-    return {"status": "success", "message": "Cron job executed successfully. Server is active."}
+    if not supabase:
+        return {"status": "error", "message": "Supabase not connected"}
+
+    # 1. ดึงเวลาปัจจุบันของประเทศไทย (UTC+7)
+    bkk_tz = pytz.timezone('Asia/Bangkok')
+    now_bkk = datetime.now(bkk_tz)
+    current_time = now_bkk.strftime("%H:%M") # จะได้ออกมาเป็นข้อความ เช่น '08:30'
+    print(f"⏰ [CRON] รันระบบตรวจสอบแจ้งเตือนเวลา: {current_time} น.")
+
+    try:
+        # 2. ดึงข้อมูลเวลามาตรฐานของผู้ใช้ทุกคน
+        users_res = supabase.table("user_profiles").select("*").execute()
+        users = users_res.data
+        
+        count_messages_sent = 0
+
+        for user in users:
+            uid = user.get("line_uid")
+            
+            # แปลงเวลาจาก DB (เช่น '08:00:00') ให้เหลือแค่ '08:00' เพื่อเอามาเทียบ
+            t_morning = str(user.get("default_morning"))[:5] if user.get("default_morning") else "08:00"
+            t_noon = str(user.get("default_noon"))[:5] if user.get("default_noon") else "12:00"
+            t_evening = str(user.get("default_evening"))[:5] if user.get("default_evening") else "18:00"
+            t_bedtime = str(user.get("default_bedtime"))[:5] if user.get("default_bedtime") else "21:00"
+
+            meal_to_take = None
+            meal_name_th = ""
+
+            # 3. ตรวจสอบว่าเวลาปัจจุบัน ตรงกับมื้อไหนของผู้ใช้คนนี้หรือไม่?
+            if current_time == t_morning:
+                meal_to_take = "morning"
+                meal_name_th = "หลังอาหารเช้า 🌅"
+            elif current_time == t_noon:
+                meal_to_take = "noon"
+                meal_name_th = "หลังอาหารกลางวัน ☀️"
+            elif current_time == t_evening:
+                meal_to_take = "evening"
+                meal_name_th = "หลังอาหารเย็น 🌆"
+            elif current_time == t_bedtime:
+                meal_to_take = "bedtime"
+                meal_name_th = "ก่อนนอน 🌙"
+
+            # 4. ถ้าเวลาตรงกับมื้อยา ให้ดึงรายชื่อยาที่ต้องกินออกมารวมกัน
+            if meal_to_take:
+                print(f"🔍 พบผู้ใช้ {uid} ถึงเวลากินมื้อ {meal_to_take}")
+                
+                # ค้นหายาที่เป็น Active และตรงกับมื้อนั้นๆ
+                reminders_res = supabase.table("reminder_schedules").select("drug_name").eq("line_uid", uid).eq("is_active", True).eq(meal_to_take, True).execute()
+                drugs = reminders_res.data
+                
+                if drugs:
+                    drug_names = [d["drug_name"] for d in drugs]
+                    drugs_text = "\n- ".join(drug_names)
+                    
+                    # 5. ส่ง LINE Push Message (ดึงข้อความยาที่มัดรวมกันแล้วส่งไปทีเดียว)
+                    msg = f"🔔 ได้เวลากินยา {meal_name_th} แล้วครับ!\n\nรายการยา:\n- {drugs_text}\n\nทานยาแล้วอย่าลืมดื่มน้ำเยอะๆ นะครับ 💙"
+                    
+                    line_bot_api.push_message(uid, TextSendMessage(text=msg))
+                    print(f"✅ ส่งแจ้งเตือนให้ {uid} สำเร็จ (ยา {len(drugs)} รายการ)")
+                    count_messages_sent += 1
+
+        return {"status": "success", "message": f"เช็กเวลา {current_time} น. สำเร็จ ส่งแจ้งเตือนไป {count_messages_sent} รายการ"}
+
+    except Exception as e:
+        print(f"❌ Error in cron job: {e}")
+        return {"status": "error", "message": str(e)}
 
 @app.post("/webhook")
 async def webhook(request: Request):
