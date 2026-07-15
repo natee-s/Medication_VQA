@@ -730,7 +730,7 @@ def handle_text_message(event):
         # 2. 🧠 เรียกใช้ Gemini Model แบบ Text
         # (ตรวจสอบให้แน่ใจว่าได้ประกาศ genai.configure(api_key=...) ไว้ด้านบนแล้ว)
         response = client.models.generate_content(
-            model='gemini-1.5-flash',
+            model='gemini-2.5-flash',
             contents=[system_prompt, f"ข้อความผู้ใช้: {user_text}"]
         )
         
