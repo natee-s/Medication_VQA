@@ -21,6 +21,7 @@ from urllib.parse import parse_qsl
 from datetime import datetime
 import pytz
 
+
 # ==========================================
 # 1. ฟังก์ชันสร้างฟังก์ชันด่านหน้า (Gatekeeper)
 # ==========================================
@@ -702,17 +703,50 @@ def test_database_connection(drug_name: str):
         print(f"❌ [DEBUG] ERROR DETAIL: {str(e)}")
         return {"status": "error", "message": str(e)}
 
-# ==========================================
-# 4. ฟังก์ชันจัดการเมื่อผู้ใช้ส่งข้อความ (Text) เข้ามา
-# ==========================================
+# ----------------------------------------
+# ฟังก์ชันรับข้อความ (Text) และวิเคราะห์ Intent (NLP)
+# ----------------------------------------
 @handler.add(MessageEvent, message=TextMessage)
-def handle_text(event):
+def handle_text_message(event):
     user_text = event.message.text
+    user_id = event.source.user_id
+
+    print(f"💬 ได้รับข้อความจาก {user_id}: {user_text}")
+
+    # 1. 🎯 สร้าง Prompt ให้ Gemini ช่วยแยกแยะเจตนา (Intent Classification)
+    system_prompt = """
+    คุณคือ AI ผู้ช่วยเภสัชกรประจำร้าน 'บ้านยาสุขใจ' 
+    จงวิเคราะห์ข้อความของผู้ใช้และแยกแยะเจตนา (Intent) ออกมาเป็น 1 ใน 3 หมวดหมู่นี้เท่านั้น:
+    1. MED_QUERY : คำถามเกี่ยวกับยา สุขภาพ อาการป่วย
+    2. STORE_INFO : คำถามเกี่ยวกับร้าน เช่น เวลาเปิด-ปิด ที่อยู่ ติดต่อ
+    3. GENERAL : การทักทายทั่วไป หรือเรื่องอื่นๆ ที่ไม่เกี่ยวกับข้างต้น
     
-    # ดักจับข้อความพื้นฐานเบื้องต้น
-    line_bot_api.reply_message(
-        event.reply_token,
-        TextSendMessage(
-            text=f"คุณพิมพ์มาว่า: '{user_text}'\n\n📸 ขณะนี้ระบบบอทยังอยู่ในช่วงทดสอบ ฟังก์ชันหลักคือการอ่าน 'รูปภาพฉลากยา' รบกวนส่งรูปฉลากยามาให้ผมวิเคราะห์ได้เลยนะครับ!"
-        )
-    )
+    กฎเหล็ก: ตอบกลับมาแค่ชื่อหมวดหมู่ภาษาอังกฤษ (เช่น MED_QUERY) ห้ามมีข้อความอื่นปนเด็ดขาด
+    """
+    
+    try:
+        # 2. 🧠 เรียกใช้ Gemini Model แบบ Text
+        # (ตรวจสอบให้แน่ใจว่าได้ประกาศ genai.configure(api_key=...) ไว้ด้านบนแล้ว)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content([system_prompt, f"ข้อความผู้ใช้: {user_text}"])
+        
+        # ตัดช่องว่างเผื่อ AI ตอบติด whitespace
+        intent = response.text.strip().upper() 
+        print(f"🧠 [NLP] วิเคราะห์ข้อความ -> Intent: {intent}")
+        
+        # 3. 🔀 Router: ส่งข้อความตอบกลับเบื้องต้นตาม Intent
+        if "MED_QUERY" in intent:
+            # อนาคตเราจะเอา RAG มาเสียบตรงนี้ครับ
+            reply_text = "💊 รับทราบครับ คุณลูกค้ากำลังสอบถามข้อมูลเรื่องยาหรือสุขภาพ เดี๋ยวผมขอไปค้นหาข้อมูลที่ถูกต้องจากคลังข้อมูลของเภสัชกรสักครู่นะครับ..."
+            
+        elif "STORE_INFO" in intent:
+            reply_text = "🏠 ร้านบ้านยาสุขใจ เปิดให้บริการทุกวันครับ สอบถามเส้นทางหรือข้อมูลเพิ่มเติมแจ้งได้เลยครับ"
+            
+        else:
+            reply_text = "สวัสดีครับ บ้านยาสุขใจยินดีให้บริการครับ วันนี้มีอะไรให้ผมช่วยดูแลไหมครับ? 😊"
+            
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+        
+    except Exception as e:
+        print(f"❌ Error in text message NLP: {e}")
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ขออภัยครับ ตอนนี้ระบบคัดกรองข้อความขัดข้องชั่วคราวครับ"))
