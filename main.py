@@ -727,8 +727,10 @@ def handle_text_message(event):
     try:
         # 2. 🧠 เรียกใช้ Gemini Model แบบ Text
         # (ตรวจสอบให้แน่ใจว่าได้ประกาศ genai.configure(api_key=...) ไว้ด้านบนแล้ว)
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        response = model.generate_content([system_prompt, f"ข้อความผู้ใช้: {user_text}"])
+        response = client.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=[system_prompt, f"ข้อความผู้ใช้: {user_text}"]
+        )
         
         # ตัดช่องว่างเผื่อ AI ตอบติด whitespace
         intent = response.text.strip().upper() 
