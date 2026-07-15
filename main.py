@@ -439,7 +439,7 @@ def handle_image(event):
     # ==========================================
     try:
         response = ai_client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-1.5-flash',
             contents=[
                 types.Part.from_bytes(data=image_bytes, mime_type='image/jpeg'),
                 """คุณคือระบบ OCR ดึงคีย์เวิร์ดชื่อยาจากภาพเพื่อนำไปค้นหาในฐานข้อมูล
@@ -730,7 +730,7 @@ def handle_text_message(event):
         # 2. 🧠 เรียกใช้ Gemini Model แบบ Text
         # (ตรวจสอบให้แน่ใจว่าได้ประกาศ genai.configure(api_key=...) ไว้ด้านบนแล้ว)
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-1.5-flash',
             contents=[system_prompt, f"ข้อความผู้ใช้: {user_text}"]
         )
         
@@ -753,7 +753,7 @@ def handle_text_message(event):
             กฎเหล็ก: ตอบแค่คำหลัก 'เพียงคำเดียว' สั้นๆ ห้ามมีประโยคอื่น ห้ามมีเครื่องหมาย
             """
             keyword_res = client.models.generate_content(
-                model='gemini-2.5-flash', # ⚠️ แก้เป็น 2.5 ให้ตรงกับระบบหลัก
+                model='gemini-1.5-flash', # ⚠️ แก้เป็น 2.5 ให้ตรงกับระบบหลัก
                 contents=[extract_prompt, f"ข้อความ: {user_text}"]
             )
             # เคลียร์เครื่องหมายหรือช่องว่างแปลกๆ ที่ AI อาจแถมมา
@@ -790,7 +790,7 @@ def handle_text_message(event):
                 """
                 
                 final_res = client.models.generate_content(
-                    model='gemini-2.5-flash', # ⚠️ แก้เป็น 2.5 ให้ตรงกับระบบหลัก
+                    model='gemini-1.5-flash', # ⚠️ แก้เป็น 2.5 ให้ตรงกับระบบหลัก
                     contents=[final_prompt]
                 )
                 reply_text = final_res.text.strip()
