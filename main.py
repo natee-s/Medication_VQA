@@ -215,17 +215,49 @@ def check_reminder():
                 drugs = reminders_res.data
                 
                 if drugs:
-                    drug_names = [d["drug_name"] for d in drugs]
-                    drugs_text = "\n- ".join(drug_names)
-                    
-                    # 5. ส่งแจ้งเตือนแบบ Flex Message พร้อมปุ่มโต้ตอบ
+                    # 🎯 สร้างกล่องรายการยาแบบไดนามิก (มีปุ่ม "ยาหมด" แต่ละตัว)
+                    drug_list_contents = []
+                    for d in drugs:
+                        drug_name = d["drug_name"]
+                        drug_list_contents.append({
+                            "type": "box",
+                            "layout": "horizontal",
+                            "spacing": "sm",
+                            "margin": "md",
+                            "contents": [
+                                {
+                                    "type": "text",
+                                    "text": f"💊 {drug_name}",
+                                    "size": "sm",
+                                    "weight": "bold",
+                                    "color": "#333333",
+                                    "gravity": "center",
+                                    "wrap": True,
+                                    "flex": 2 # ให้พื้นที่ชื่อยา 2 ส่วน
+                                },
+                                {
+                                    "type": "button",
+                                    "style": "secondary",
+                                    "height": "sm",
+                                    "flex": 1, # ให้พื้นที่ปุ่ม 1 ส่วน
+                                    "action": {
+                                        "type": "postback", 
+                                        "label": "ยาหมด", 
+                                        # ส่งข้อมูลไปว่าต้องการหยุดยาตัวไหน
+                                        "data": f"action=stop_drug&drug={drug_name}"
+                                    }
+                                }
+                            ]
+                        })
+
+                    # 5. ส่งแจ้งเตือนแบบ Flex Message โฉมใหม่
                     flex_alert = {
                         "type": "bubble",
                         "size": "mega",
                         "header": {
                             "type": "box",
                             "layout": "vertical",
-                            "backgroundColor": "#FFC107", # สีเหลืองแจ้งเตือน
+                            "backgroundColor": "#FFC107",
                             "contents": [
                                 {"type": "text", "text": "🔔 ได้เวลากินยาแล้วครับ!", "weight": "bold", "size": "lg", "color": "#FFFFFF"}
                             ]
@@ -234,11 +266,11 @@ def check_reminder():
                             "type": "box",
                             "layout": "vertical",
                             "spacing": "md",
+                            # นำส่วนหัว มาบวกกับ รายการยาที่วนลูปไว้ด้านบน
                             "contents": [
                                 {"type": "text", "text": f"มื้อ: {meal_name_th}", "weight": "bold", "size": "md", "color": "#1DB446"},
-                                {"type": "text", "text": "รายการยาที่ต้องทาน:", "size": "sm", "color": "#666666"},
-                                {"type": "text", "text": drugs_text, "wrap": True, "weight": "bold"}
-                            ]
+                                {"type": "separator", "margin": "md"}
+                            ] + drug_list_contents 
                         },
                         "footer": {
                             "type": "box",
@@ -250,20 +282,13 @@ def check_reminder():
                                     "style": "primary",
                                     "color": "#1DB446",
                                     "height": "sm",
-                                    "action": {"type": "postback", "label": "✅ กินยาแล้ว", "data": f"action=take_pill&meal={meal_to_take}"}
+                                    "action": {"type": "postback", "label": "✅ กินยาทั้งหมดแล้ว", "data": f"action=take_pill&meal={meal_to_take}"}
                                 },
                                 {
                                     "type": "button",
                                     "style": "secondary",
                                     "height": "sm",
                                     "action": {"type": "postback", "label": "💤 เลื่อน 15 นาที", "data": f"action=snooze&meal={meal_to_take}"}
-                                },
-                                {
-                                    "type": "button",
-                                    "style": "link",
-                                    "color": "#E03131",
-                                    "height": "sm",
-                                    "action": {"type": "postback", "label": "⏹️ หยุดเตือนมื้อนี้", "data": f"action=stop_reminder&meal={meal_to_take}"}
                                 }
                             ]
                         }
