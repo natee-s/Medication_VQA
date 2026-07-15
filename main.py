@@ -739,17 +739,63 @@ def handle_text_message(event):
         print(f"🧠 [NLP] วิเคราะห์ข้อความ -> Intent: {intent}")
         
         # 3. 🔀 Router: ส่งข้อความตอบกลับเบื้องต้นตาม Intent
+        # 3. 🔀 Router: ส่งข้อความตอบกลับเบื้องต้นตาม Intent
         if "MED_QUERY" in intent:
-            # อนาคตเราจะเอา RAG มาเสียบตรงนี้ครับ
-            reply_text = "💊 รับทราบครับ คุณลูกค้ากำลังสอบถามข้อมูลเรื่องยาหรือสุขภาพ เดี๋ยวผมขอไปค้นหาข้อมูลที่ถูกต้องจากคลังข้อมูลของเภสัชกรสักครู่นะครับ..."
+            # 3.1 สกัดคำค้นหา (Keyword) จากข้อความของลูกค้า
+            extract_prompt = "ดึงคำสำคัญที่เป็น 'อาการป่วย' หรือ 'ชื่อยา' จากข้อความต่อไปนี้ เพื่อนำไปค้นหาในฐานข้อมูล ตอบแค่คำสำคัญคำเดียวสั้นๆ ห้ามมีน้ำ"
+            keyword_res = client.models.generate_content(
+                model='gemini-2.0-flash', # ⚠️ เปลี่ยนชื่อ Model ให้ตรงกับของคุณแมน
+                contents=[extract_prompt, f"ข้อความ: {user_text}"]
+            )
+            keyword = keyword_res.text.strip()
+            print(f"🔍 [RAG] Keyword สำหรับค้นหา: {keyword}")
+
+            # 3.2 ค้นหาข้อมูลยาใน Supabase (ใช้ตาราง Medication_VQA)
+            # ค้นหาคำที่ตรงกันในคอลัมน์ rag_text หรือ indication
+            db_res = supabase.table("Medication_VQA").select("trade_name, rag_text").ilike("rag_text", f"%{keyword}%").execute()
+            records = db_res.data
+
+            if records:
+                # 3.3 ถ้าระบบค้นเจอยาที่ตรงกับอาการ ให้นำข้อมูลมาสร้าง Context
+                context_texts = [f"- {r['trade_name']}: {r['rag_text']}" for r in records]
+                context_str = "\n".join(context_texts)
+                
+                final_prompt = f"""
+                คุณคือ AI ผู้ช่วยเภสัชกรประจำร้าน 'บ้านยาสุขใจ'
+                จงตอบคำถามลูกค้าโดยอ้างอิงจากข้อมูล (Context) ด้านล่างนี้เท่านั้น
+                
+                ข้อมูลอ้างอิงจากร้านยา:
+                {context_str}
+                
+                คำถามของลูกค้า: {user_text}
+                
+                กฎเหล็ก: 
+                - ตอบด้วยความสุภาพ เป็นกันเอง สั้นกระชับเข้าใจง่าย
+                - ห้ามแนะนำยาหรือวิธีการรักษาที่ 'ไม่มี' ในข้อมูลอ้างอิงเด็ดขาด ถ้าข้อมูลไม่พอให้บอกว่าแนะนำให้ปรึกษาเภสัชกรหน้าร้าน
+                """
+                
+                final_res = client.models.generate_content(
+                    model='gemini-2.0-flash', # ⚠️ เปลี่ยนชื่อ Model ให้ตรงกับของคุณแมน
+                    contents=[final_prompt]
+                )
+                reply_text = final_res.text.strip()
+                print("✅ [RAG] สร้างคำตอบสำเร็จ!")
+            else:
+                # ถ้าไม่พบข้อมูลยาในฐานข้อมูล
+                reply_text = f"ขออภัยครับคุณลูกค้า จากข้อมูลของร้านบ้านยาสุขใจ ตอนนี้ผมยังไม่พบข้อมูลที่เกี่ยวกับ '{keyword}' ครับ รบกวนทักสอบถามเภสัชกรที่หน้าร้านได้เลยนะครับ 👨‍⚕️"
+            
+            # ส่งคำตอบกลับไปหาลูกค้า
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
             
         elif "STORE_INFO" in intent:
-            reply_text = "🏠 ร้านบ้านยาสุขใจ เปิดให้บริการทุกวันครับ สอบถามเส้นทางหรือข้อมูลเพิ่มเติมแจ้งได้เลยครับ"
+            # ...(โค้ด STORE_INFO ของเดิม)...
+            reply_text = "🏠 ร้านบ้านยาสุขใจ ตั้งอยู่ที่ อ.หนองแค จ.สระบุรี เปิดให้บริการทุกวันครับ สอบถามเส้นทางเพิ่มเติมแจ้งได้เลยครับ"
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
             
         else:
+            # ...(โค้ด GENERAL ของเดิม)...
             reply_text = "สวัสดีครับ บ้านยาสุขใจยินดีให้บริการครับ วันนี้มีอะไรให้ผมช่วยดูแลไหมครับ? 😊"
-            
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
         
     except Exception as e:
         print(f"❌ Error in text message NLP: {e}")
