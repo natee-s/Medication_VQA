@@ -1025,19 +1025,6 @@ def handle_text_message(event):
                     event.reply_token, 
                     TextSendMessage(text="ขออภัยครับ ระบบจัดรูปแบบข้อมูลขัดข้องเบื้องต้น แต่เภสัชกรได้รับข้อความแล้ว รบกวนรอสักครู่นะครับ 👨‍⚕️")
                 )
-            
-        elif "STORE_INFO" in intent:
-            reply_text = "🏠 ร้านบ้านยาสุขใจ ตั้งอยู่ที่ อ.หนองแค จ.สระบุรี เปิดให้บริการทุกวันครับ สอบถามเส้นทางเพิ่มเติมแจ้งได้เลยครับ"
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
-            
-        else:
-            reply_text = "สวัสดีครับ บ้านยาสุขใจยินดีให้บริการครับ วันนี้มีอะไรให้ผมช่วยดูแลไหมครับ? 😊"
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
-        
-    except Exception as e:
-        print(f"❌ Error in text message NLP: {e}")
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ขออภัยครับ ตอนนี้ระบบคัดกรองข้อความขัดข้องชั่วคราวครับ"))
-
 # ==========================================
 # ⚡ ดักจับข้อความประเภทอื่นๆ (Edge Cases & Error Handling)
 # ==========================================
