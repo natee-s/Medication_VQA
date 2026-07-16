@@ -948,7 +948,7 @@ def handle_text_message(event):
 
             # สเต็ปที่ 2: สั่ง Gemini ให้ตอบกลับมาเป็น JSON
             final_res = client.models.generate_content(
-                model='gemini-2.0-flash', 
+                model='gemini-2.5-flash', 
                 contents=[final_prompt],
                 config={"response_mime_type": "application/json"}
             )
