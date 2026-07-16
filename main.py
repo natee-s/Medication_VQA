@@ -929,30 +929,102 @@ def handle_text_message(event):
                 context_texts = [f"- {r['trade_name']}: {r['rag_text']}" for r in records]
                 context_str = "\n".join(context_texts)
                 
-                final_prompt = f"""
-                คุณคือ AI ผู้ช่วยเภสัชกรประจำร้าน 'บ้านยาสุขใจ'
-                จงตอบคำถามลูกค้าโดยอ้างอิงจากข้อมูล (Context) ด้านล่างนี้เท่านั้น
+                # สเต็ปที่ 1: สร้าง Prompt บังคับโครงสร้าง JSON
+            final_prompt = f"""
+            จากข้อมูลร้านยาต่อไปนี้: {context_text}
+            จงตอบคำถามของลูกค้า: {user_text}
+
+            กรุณาตอบกลับในรูปแบบ JSON เท่านั้น โดยใช้โครงสร้างดังนี้:
+            {{
+              "symptom": "สรุปอาการสั้นๆ (เช่น ปวดหัวจากความเครียด)",
+              "advice": "คำแนะนำเบื้องต้น",
+              "recommended_drug": "ชื่อยาที่แนะนำ (ถ้าไม่มีให้ใส่ค่าว่าง '')",
+              "warning": "ข้อควรระวัง (ถ้าไม่มีให้ใส่ค่าว่าง '')"
+            }}
+            """
+
+            # สเต็ปที่ 2: สั่ง Gemini ให้ตอบกลับมาเป็น JSON
+            final_res = client.models.generate_content(
+                model='gemini-2.0-flash', # หรือโมเดลเวอร์ชันที่คุณแมนกำลังใช้งานอยู่
+                contents=[final_prompt],
+                config={"response_mime_type": "application/json"} # 👈 หัวใจสำคัญที่ห้ามลืม!
+            )
+
+            # สเต็ปที่ 3: ประกอบร่าง Flex Message แบบ Dynamic
+            try:
+                # แปลงข้อความ JSON จาก AI ให้กลายเป็น Dictionary ของ Python
+                ai_data = json.loads(final_res.text)
                 
-                ข้อมูลอ้างอิงจากร้านยา:
-                {context_str}
+                # สร้างกล่องเก็บเนื้อหาแบบค่อยๆ เติม
+                body_contents = []
                 
-                คำถามของลูกค้า: {user_text}
+                # --- ส่วนที่ 1: อาการและคำแนะนำ (ส่วนนี้บังคับมีเสมอ) ---
+                body_contents.append({
+                    "type": "text", "text": f"🩺 อาการ: {ai_data.get('symptom', 'ไม่ระบุ')}", 
+                    "weight": "bold", "color": "#1DB446", "wrap": True
+                })
+                body_contents.append({
+                    "type": "text", "text": ai_data.get('advice', ''), 
+                    "wrap": True, "size": "sm", "margin": "md", "color": "#333333"
+                })
                 
-                กฎเหล็ก: 
-                - ตอบด้วยความสุภาพ เป็นกันเอง สั้นกระชับเข้าใจง่าย
-                - ห้ามแนะนำยาหรือวิธีการรักษาที่ 'ไม่มี' ในข้อมูลอ้างอิงเด็ดขาด ถ้าข้อมูลไม่พอให้บอกว่าแนะนำให้ปรึกษาเภสัชกรหน้าร้าน
-                """
+                # --- ส่วนที่ 2: ยาที่แนะนำ (เช็กก่อนว่ามีไหม ถ้า AI ส่งมาค่อยเพิ่มกล่องนี้) ---
+                if ai_data.get('recommended_drug'):
+                    body_contents.append({"type": "separator", "margin": "lg"})
+                    body_contents.append({
+                        "type": "text", "text": "💊 ยาที่แนะนำเบื้องต้น", 
+                        "weight": "bold", "size": "sm", "color": "#009688", "margin": "md"
+                    })
+                    body_contents.append({
+                        "type": "text", "text": ai_data.get('recommended_drug'), 
+                        "wrap": True, "size": "sm", "color": "#666666"
+                    })
+
+                # --- ส่วนที่ 3: ข้อควรระวัง (เช็กก่อนว่ามีไหม) ---
+                if ai_data.get('warning'):
+                    body_contents.append({"type": "separator", "margin": "lg"})
+                    body_contents.append({
+                        "type": "text", "text": "⚠️ ข้อควรระวัง", 
+                        "weight": "bold", "size": "sm", "color": "#F44336", "margin": "md"
+                    })
+                    body_contents.append({
+                        "type": "text", "text": ai_data.get('warning'), 
+                        "wrap": True, "size": "sm", "color": "#666666"
+                    })
+
+                # ประกอบร่างใส่ Flex Message โครงสร้างหลัก
+                flex_rag_reply = {
+                    "type": "bubble",
+                    "header": {
+                        "type": "box", "layout": "vertical", "backgroundColor": "#1DB446",
+                        "contents": [{"type": "text", "text": "👩‍⚕️ บ้านยาสุขใจ แนะนำ", "color": "#FFFFFF", "weight": "bold"}]
+                    },
+                    "body": {
+                        "type": "box", "layout": "vertical", "spacing": "sm",
+                        "contents": body_contents # 👈 เอา Array กล่องทั้งหมดที่ต่อเสร็จแล้วมาใส่ตรงนี้
+                    },
+                    "footer": {
+                        "type": "box", "layout": "vertical",
+                        "contents": [
+                            # ปุ่มสามารถเปลี่ยนเป็น Link ไปหาส่วนติดต่อร้านจริงๆ ได้ในอนาคตครับ
+                            {"type": "button", "style": "primary", "action": {"type": "message", "label": "ติดต่อเภสัชกร", "text": "ติดต่อเภสัชกร"}}
+                        ]
+                    }
+                }
                 
-                final_res = client.models.generate_content(
-                    model='gemini-2.5-flash', # ⚠️ แก้เป็น 2.5 ให้ตรงกับระบบหลัก
-                    contents=[final_prompt]
+                # ส่ง Flex Message กลับไปหาลูกค้า
+                line_bot_api.reply_message(
+                    event.reply_token, 
+                    FlexSendMessage(alt_text="คำแนะนำสุขภาพจากบ้านยาสุขใจ", contents=flex_rag_reply)
                 )
-                reply_text = final_res.text.strip()
-                print("✅ [RAG] สร้างคำตอบจากฐานข้อมูลสำเร็จ!")
-            else:
-                reply_text = f"ขออภัยครับคุณลูกค้า จากข้อมูลของร้านบ้านยาสุขใจ ตอนนี้ผมยังไม่พบข้อมูลที่เกี่ยวกับ '{keyword}' ครับ รบกวนทักสอบถามเภสัชกรที่หน้าร้านได้เลยนะครับ 👨‍⚕️"
-            
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+
+            except Exception as e:
+                print(f"❌ Error parsing JSON or building Flex: {e}")
+                # Fallback: ดักไว้เผื่อ Gemini เบลอส่ง JSON พัง จะได้ตอบเป็นข้อความธรรมดาแทนบอทเงียบ
+                line_bot_api.reply_message(
+                    event.reply_token, 
+                    TextSendMessage(text="ขออภัยครับ ระบบจัดรูปแบบข้อมูลขัดข้องเบื้องต้น แต่เภสัชกรได้รับข้อความแล้ว รบกวนรอสักครู่นะครับ 👨‍⚕️")
+                )
             
         elif "STORE_INFO" in intent:
             reply_text = "🏠 ร้านบ้านยาสุขใจ ตั้งอยู่ที่ อ.หนองแค จ.สระบุรี เปิดให้บริการทุกวันครับ สอบถามเส้นทางเพิ่มเติมแจ้งได้เลยครับ"
