@@ -723,6 +723,42 @@ def handle_text_message(event):
 
     print(f"💬 ได้รับข้อความจาก {user_id}: {user_text}")
 
+    # ==========================================
+    # ⚡ [ดักจับพิเศษ] คำสั่งจาก Rich Menu
+    # ==========================================
+    if user_text == "เช็กรายการยา":
+        try:
+            # ดึงข้อมูลยาที่ยัง Active อยู่ของลูกค้ารายนี้
+            res = supabase.table("reminder_schedules").select("drug_name, morning, noon, evening, bedtime").eq("line_uid", user_id).eq("is_active", True).execute()
+            if res.data:
+                reply_text = "💊 รายการยาที่คุณต้องทานปัจจุบันมีดังนี้ครับ:\n\n"
+                for item in res.data:
+                    meals = []
+                    if item.get("morning"): meals.append("เช้า")
+                    if item.get("noon"): meals.append("กลางวัน")
+                    if item.get("evening"): meals.append("เย็น")
+                    if item.get("bedtime"): meals.append("ก่อนนอน")
+                    
+                    meal_str = ", ".join(meals) if meals else "ไม่ระบุมื้อ"
+                    reply_text += f"🔹 {item['drug_name']}\n   (มื้อ: {meal_str})\n"
+                
+                reply_text += "\nขอให้สุขภาพแข็งแรงนะครับ 💙"
+            else:
+                reply_text = "ตอนนี้คุณไม่มีรายการยาที่ตั้งเตือนไว้ครับ หากต้องการตั้งเตือนสามารถถ่ายรูปฉลากยาส่งมาได้เลยครับ 📸"
+            
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+        except Exception as e:
+            print(f"❌ Error checking meds: {e}")
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ขออภัยครับ ไม่สามารถดึงข้อมูลรายการยาได้ในขณะนี้"))
+        return # หยุดการทำงานตรงนี้ ไม่ต้องส่งไปหา AI
+
+    elif user_text == "เปลี่ยนเวลาแจ้งเตือน":
+        # (Prototype) ส่งข้อความแจ้งลูกค้าไปก่อน เดี๋ยวเราค่อยมาต่อยอดทำ Flex Message ให้เลือกเวลา
+        reply_text = "ฟีเจอร์นี้กำลังอยู่ในช่วงพัฒนาครับ 🛠️ ในอนาคตคุณจะสามารถปรับเปลี่ยนเวลาทานยา (เช้า/กลางวัน/เย็น/ก่อนนอน) ให้ตรงกับไลฟ์สไตล์ของคุณได้ด้วยตัวเองเลยครับ!"
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+        return # หยุดการทำงานตรงนี้ ไม่ต้องส่งไปหา AI
+    # ==========================================
+
     # 1. 🎯 สร้าง Prompt ให้ Gemini ช่วยแยกแยะเจตนา (Intent Classification)
     system_prompt = """
     คุณคือ AI ผู้ช่วยเภสัชกรประจำร้าน 'บ้านยาสุขใจ' 
