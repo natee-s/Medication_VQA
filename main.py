@@ -520,9 +520,13 @@ def handle_image(event):
             # รวมเป็น text เช่น "morning,bedtime" ถ้าไม่มีให้ส่ง "none"
             time_payload = ",".join(time_list) if time_list else "none"
 
-            # 👇 เพิ่ม 2 บรรทัดนี้เข้าไปเพื่อดูค่าในหน้า Log ของ Render 👇
+            # 👇 [เพิ่มใหม่] ลอจิกตรวจสอบ ก่อนอาหาร หรือ หลังอาหาร 👇
+            meal_timing = "after" # ตั้งค่าเริ่มต้นให้เป็น 'หลังอาหาร' ไว้ก่อน
+            if 'ก่อนอาหาร' in instruction or 'ก่อน' in instruction:
+                meal_timing = "before"
+            
             print(f"🔍 [DEBUG] ข้อความวิธีใช้จาก DB: {instruction}")
-            print(f"🔍 [DEBUG] Time Payload ที่สร้างได้: {time_payload}")
+            print(f"🔍 [DEBUG] Time Payload: {time_payload} | Timing: {meal_timing}")
             # ----------------------------------------------------
 
             flex_bubble = {
@@ -559,7 +563,7 @@ def handle_image(event):
                             "type": "button",
                             "style": "primary",
                             "height": "sm",
-                            "action": {"type": "postback", "label": "⏰ ตั้งเตือนกินยา", "data": f"action=set_reminder&drug={generic_name}&time={time_payload}"}
+                            "action": {"type": "postback", "label": "⏰ ตั้งเตือนกินยา", "data": f"action=set_reminder&drug={generic_name}&time={time_payload}&timing={meal_timing}"}
                         },
                         {
                             "type": "button",
@@ -600,27 +604,26 @@ def handle_postback(event):
     # กรณีที่ 2: ผู้ใช้กดปุ่ม "⏰ ตั้งเตือนกินยา"
     # ----------------------------------------
     elif data.startswith("action=set_reminder"):
-        # ใช้ parse_qsl แกะข้อมูลที่ถูกส่งมา (เช่น action=set_reminder&drug=Para&time=morning)
         postback_dict = dict(parse_qsl(data))
         
         drug_name = postback_dict.get("drug", "ยาของคุณ")
         time_str = postback_dict.get("time", "")
+        # 👇 รับค่าก่อน/หลังอาหารที่แอบส่งมา (ถ้าไม่มีให้เป็น after)
+        meal_timing = postback_dict.get("timing", "after") 
 
-        print(f"เตรียมบันทึกข้อมูลลง DB: User={user_id}, Drug={drug_name}, Time={time_str}")
+        print(f"เตรียมบันทึกข้อมูลลง DB: User={user_id}, Drug={drug_name}, Time={time_str}, Timing={meal_timing}")
 
-        # เช็กว่ามีคำว่าเช้า กลางวัน เย็น หรือก่อนนอน ไหม
         is_morning = "morning" in time_str
         is_noon = "noon" in time_str
         is_evening = "evening" in time_str
         is_bedtime = "bedtime" in time_str
 
         try:
-            # 1. เช็คว่ามี User ใน DB หรือยัง
             user_check = supabase.table("user_profiles").select("line_uid").eq("line_uid", user_id).execute()
             if not user_check.data:
                 supabase.table("user_profiles").insert({"line_uid": user_id}).execute()
 
-            # 2. บันทึกข้อมูลตั้งเตือน พร้อมเวลาที่ดึงมาได้
+            # 👇 เพิ่มคอลัมน์ meal_timing เข้าไปในข้อมูลที่จะบันทึก
             reminder_payload = {
                 "line_uid": user_id,
                 "drug_name": drug_name,
@@ -628,23 +631,20 @@ def handle_postback(event):
                 "morning": is_morning,
                 "noon": is_noon,
                 "evening": is_evening,
-                "bedtime": is_bedtime
+                "bedtime": is_bedtime,
+                "meal_timing": meal_timing # 👈 บันทึกลง Supabase ตรงนี้
             }
             supabase.table("reminder_schedules").insert(reminder_payload).execute()
 
-            # 3. ตอบกลับผู้ใช้
-            reply_text = f"⏰ ตั้งเวลาเตือนสำหรับยา {drug_name} ลงในระบบเรียบร้อยครับ!"
-            line_bot_api.reply_message(
-                event.reply_token,
-                TextSendMessage(text=reply_text)
-            )
+            # สร้างข้อความแจ้งลูกค้าให้ชัดเจนขึ้น
+            timing_th = "ก่อนอาหาร" if meal_timing == "before" else "หลังอาหาร"
+            reply_text = f"⏰ ตั้งเวลาเตือนสำหรับยา {drug_name} ({timing_th}) ลงในระบบเรียบร้อยครับ!"
+            
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
             
         except Exception as e:
             print(f"Error saving reminder: {e}")
-            line_bot_api.reply_message(
-                event.reply_token,
-                TextSendMessage(text="❌ เกิดข้อผิดพลาดในการบันทึกข้อมูลลงฐานข้อมูล กรุณาลองใหม่อีกครั้ง")
-            )
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="❌ เกิดข้อผิดพลาดในการบันทึกข้อมูลลงฐานข้อมูล กรุณาลองใหม่อีกครั้ง"))
             
     # ----------------------------------------
     # กรณีที่ 3: ผู้ใช้กดปุ่มจาก Flex Message แจ้งเตือนกินยา
