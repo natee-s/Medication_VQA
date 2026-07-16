@@ -20,6 +20,7 @@ from supabase import create_client, Client
 from urllib.parse import parse_qsl
 from datetime import datetime
 import pytz
+import logging
 
 
 # ==========================================
@@ -139,7 +140,16 @@ def process_pharmacy_label(input_path, output_path):
     cv2.imwrite(output_path, processed)
     h, w = processed.shape
     return w, h
+# ==========================================
+# ⚡ ฟิลเตอร์ซ่อน Log Uvicorn เฉพาะเส้นทาง Cron Job
+# ==========================================
+class EndpointFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        # ถ้าข้อความ Log มีคำว่า /cron/check-reminder ให้ซ่อนไปเลย (return False)
+        return record.getMessage().find("/cron/check-reminder") == -1
 
+# นำ Filter ไปติดไว้ที่ระบบ Log ของเซิร์ฟเวอร์
+logging.getLogger("uvicorn.access").addFilter(EndpointFilter())
 
 # ==========================================
 # 2. การตั้งค่าเซิร์ฟเวอร์, LINE Bot และ Gemini API
@@ -761,7 +771,6 @@ def handle_text_message(event):
             print(f"🔍 [RAG] Keyword สำหรับค้นหา: {keyword}")
 
             # 3.2 ค้นหาข้อมูลควบทั้งคอลัมน์ rag_text และ indication ด้วยคำสั่ง .or_()
-            # ⚠️ แก้ไขเครื่องหมาย \ เป็นการใช้วงเล็บ () ครอบคำสั่งแทน เพื่อป้องกัน SyntaxError
             db_res = (
                 supabase.table("Medication_VQA")
                 .select("trade_name, rag_text")
