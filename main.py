@@ -8,6 +8,11 @@ from linebot.models import (
     ImageMessage,
     FlexSendMessage,
     PostbackEvent,
+    StickerMessage,
+    VideoMessage,
+    AudioMessage,
+    LocationMessage,
+    FileMessage
 )
 import os
 import cv2
@@ -949,3 +954,23 @@ def handle_text_message(event):
     except Exception as e:
         print(f"❌ Error in text message NLP: {e}")
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ขออภัยครับ ตอนนี้ระบบคัดกรองข้อความขัดข้องชั่วคราวครับ"))
+
+# ==========================================
+# ⚡ ดักจับข้อความประเภทอื่นๆ (Edge Cases & Error Handling)
+# ==========================================
+@handler.add(MessageEvent, message=(StickerMessage, VideoMessage, AudioMessage, LocationMessage, FileMessage))
+def handle_other_messages(event):
+    # กำหนดข้อความตอบกลับเมื่อลูกค้าส่งสิ่งที่ไม่รองรับเข้ามา
+    reply_text = (
+        "ขออภัยครับ 🙏 ตอนนี้ผู้ช่วยเภสัชกรยังรองรับแค่การส่ง 'ข้อความ' และ 'รูปภาพ' เท่านั้นครับ\n\n"
+        "หากมีคำถามเรื่องยา สามารถพิมพ์สอบถาม หรือส่งรูปฉลากยามาให้ผมดูแลได้เลยนะครับ 💊"
+    )
+    
+    try:
+        line_bot_api.reply_message(
+            event.reply_token, 
+            TextSendMessage(text=reply_text)
+        )
+        print("✅ [EDGE CASE] ตอบกลับข้อความที่ไม่รองรับสำเร็จ")
+    except Exception as e:
+        print(f"❌ [EDGE CASE] Error: {e}")
