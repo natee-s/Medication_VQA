@@ -12,7 +12,7 @@ from linebot.models import (
     VideoMessage,
     AudioMessage,
     LocationMessage,
-    FileMessage
+    FileMessage,
 )
 import os
 import cv2
@@ -929,7 +929,7 @@ def handle_text_message(event):
                 context_texts = [f"- {r['trade_name']}: {r['rag_text']}" for r in records]
                 context_str = "\n".join(context_texts)
                 
-                # สเต็ปที่ 1: สร้าง Prompt บังคับโครงสร้าง JSON
+            # สเต็ปที่ 1: สร้าง Prompt บังคับโครงสร้าง JSON
             final_prompt = f"""
             จากข้อมูลร้านยาต่อไปนี้: {context_text}
             จงตอบคำถามของลูกค้า: {user_text}
@@ -1025,6 +1025,17 @@ def handle_text_message(event):
                     event.reply_token, 
                     TextSendMessage(text="ขออภัยครับ ระบบจัดรูปแบบข้อมูลขัดข้องเบื้องต้น แต่เภสัชกรได้รับข้อความแล้ว รบกวนรอสักครู่นะครับ 👨‍⚕️")
                 )
+            except Exception as e:
+                error_msg = str(e)
+                print(f"❌ Error in text message NLP: {error_msg}")
+                
+                if "503" in error_msg or "UNAVAILABLE" in error_msg or "429" in error_msg:
+                    reply_text = "ขออภัยครับคุณลูกค้า ตอนนี้ผู้ช่วยเภสัชกร AI กำลังติดสายให้บริการคิวอื่นอยู่ 😅 รบกวนรอสัก 1 นาทีแล้วพิมพ์ถามใหม่อีกครั้งนะครับ 🙏"
+                else:
+                    reply_text = "ขออภัยครับ ตอนนี้ระบบคัดกรองข้อความขัดข้องชั่วคราว รบกวนติดต่อเภสัชกรที่หน้าร้านได้เลยนะครับ 👨‍⚕️"
+                    
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+
 # ==========================================
 # ⚡ ดักจับข้อความประเภทอื่นๆ (Edge Cases & Error Handling)
 # ==========================================
