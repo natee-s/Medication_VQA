@@ -178,34 +178,42 @@ def check_reminder():
     if not supabase:
         return {"status": "error", "message": "Supabase not connected"}
 
-    # 1. ดึงเวลาปัจจุบันของประเทศไทย (UTC+7)
+    # 1. นำเข้า timedelta เพื่อใช้คำนวณเวลา และดึงเวลาปัจจุบัน
+    from datetime import timedelta
     bkk_tz = pytz.timezone('Asia/Bangkok')
     now_bkk = datetime.now(bkk_tz)
-    current_time = now_bkk.strftime("%H:%M") # จะได้ออกมาเป็นข้อความ เช่น '08:30'
-    #print(f"⏰ [CRON] รันระบบตรวจสอบแจ้งเตือนเวลา: {current_time} น.")
+    current_time_str = now_bkk.strftime("%H:%M") # เช่น 08:00 (ใช้สำหรับเตือน หลังอาหาร)
+    
+    # คำนวณเวลาล่วงหน้า 30 นาที
+    now_plus_30 = now_bkk + timedelta(minutes=30)
+    future_30_str = now_plus_30.strftime("%H:%M") # เช่น 08:30 (ใช้สำหรับเตือน ก่อนอาหาร)
 
     try:
-        # 2. ค้นหาเฉพาะลูกค้าที่ถึงเวลากินยาในนาทีนี้ (ลดภาระ Database)
-        current_time_db = f"{current_time}:00" # เติมวินาทีให้ตรงกับฟอร์แมตเวลาใน DB (เช่น 08:00:00)
+        current_time_db = f"{current_time_str}:00"
+        future_30_db = f"{future_30_str}:00"
         
-        # 2.1 สร้างเงื่อนไขค้นหาเวลาที่ระบุไว้
+        # 2. ค้นหาผู้ใช้ที่มีเวลาตรงกับปัจจุบัน หรือตรงกับ 30 นาทีข้างหน้า
         or_conditions = [
-            f"default_morning.eq.{current_time_db}",
-            f"default_noon.eq.{current_time_db}",
-            f"default_evening.eq.{current_time_db}",
-            f"default_bedtime.eq.{current_time_db}"
+            f"default_morning.eq.{current_time_db}", f"default_morning.eq.{future_30_db}",
+            f"default_noon.eq.{current_time_db}", f"default_noon.eq.{future_30_db}",
+            f"default_evening.eq.{current_time_db}", f"default_evening.eq.{future_30_db}",
+            f"default_bedtime.eq.{current_time_db}", f"default_bedtime.eq.{future_30_db}"
         ]
         
-        # 2.2 ดักจับคนที่เป็นค่าว่าง (NULL) ให้ใช้เวลามาตรฐานของร้าน
-        if current_time == "08:00": or_conditions.append("default_morning.is.null")
-        if current_time == "12:00": or_conditions.append("default_noon.is.null")
-        if current_time == "18:00": or_conditions.append("default_evening.is.null")
-        if current_time == "21:00": or_conditions.append("default_bedtime.is.null")
+        # 2.1 ดักจับกรณีผู้ใช้ไม่ได้ตั้งเวลาเอง (ใช้เวลามาตรฐานของร้าน)
+        # ตรวจสอบเพื่อเตือน ยาหลังอาหาร
+        if current_time_str == "08:00": or_conditions.append("default_morning.is.null")
+        if current_time_str == "12:00": or_conditions.append("default_noon.is.null")
+        if current_time_str == "18:00": or_conditions.append("default_evening.is.null")
+        if current_time_str == "21:00": or_conditions.append("default_bedtime.is.null")
         
-        # 2.3 รวมเงื่อนไขทั้งหมดเข้าด้วยกัน
+        # ตรวจสอบเพื่อเตือน ยาก่อนอาหาร (ลบ 30 นาทีจากเวลามาตรฐาน)
+        if current_time_str == "07:30": or_conditions.append("default_morning.is.null")
+        if current_time_str == "11:30": or_conditions.append("default_noon.is.null")
+        if current_time_str == "17:30": or_conditions.append("default_evening.is.null")
+        if current_time_str == "20:30": or_conditions.append("default_bedtime.is.null")
+        
         query_string = ",".join(or_conditions)
-        
-        # 2.4 ยิงคำสั่งให้ Supabase กรองมาให้เลย
         users_res = supabase.table("user_profiles").select("*").or_(query_string).execute()
         users = users_res.data
         
@@ -214,39 +222,46 @@ def check_reminder():
         for user in users:
             uid = user.get("line_uid")
             
-            # แปลงเวลาจาก DB (เช่น '08:00:00') ให้เหลือแค่ '08:00' เพื่อเอามาเทียบ
             t_morning = str(user.get("default_morning"))[:5] if user.get("default_morning") else "08:00"
             t_noon = str(user.get("default_noon"))[:5] if user.get("default_noon") else "12:00"
             t_evening = str(user.get("default_evening"))[:5] if user.get("default_evening") else "18:00"
             t_bedtime = str(user.get("default_bedtime"))[:5] if user.get("default_bedtime") else "21:00"
 
-            meal_to_take = None
-            meal_name_th = ""
-
-            # 3. ตรวจสอบว่าเวลาปัจจุบัน ตรงกับมื้อไหนของผู้ใช้คนนี้หรือไม่?
-            if current_time == t_morning:
-                meal_to_take = "morning"
-                meal_name_th = "หลังอาหารเช้า 🌅"
-            elif current_time == t_noon:
-                meal_to_take = "noon"
-                meal_name_th = "หลังอาหารกลางวัน ☀️"
-            elif current_time == t_evening:
-                meal_to_take = "evening"
-                meal_name_th = "หลังอาหารเย็น 🌆"
-            elif current_time == t_bedtime:
-                meal_to_take = "bedtime"
-                meal_name_th = "ก่อนนอน 🌙"
-
-            # 4. ถ้าเวลาตรงกับมื้อยา ให้ดึงรายชื่อยาที่ต้องกินออกมารวมกัน
-            if meal_to_take:
-                print(f"🔍 พบผู้ใช้ {uid} ถึงเวลากินมื้อ {meal_to_take}")
+            # 3. เตรียมรอบการแจ้งเตือน (แยกตะกร้ายาก่อน/หลังอาหาร อย่างชาญฉลาด)
+            meals_to_trigger = []
+            
+            if current_time_str == t_morning:
+                meals_to_trigger.append({"meal": "morning", "timing": "after", "meal_name_th": "หลังอาหารเช้า 🌅"})
+            if future_30_str == t_morning:
+                meals_to_trigger.append({"meal": "morning", "timing": "before", "meal_name_th": "ก่อนอาหารเช้า 🌅"})
+            
+            if current_time_str == t_noon:
+                meals_to_trigger.append({"meal": "noon", "timing": "after", "meal_name_th": "หลังอาหารกลางวัน ☀️"})
+            if future_30_str == t_noon:
+                meals_to_trigger.append({"meal": "noon", "timing": "before", "meal_name_th": "ก่อนอาหารกลางวัน ☀️"})
                 
-                # ค้นหายาที่เป็น Active และตรงกับมื้อนั้นๆ
-                reminders_res = supabase.table("reminder_schedules").select("drug_name").eq("line_uid", uid).eq("is_active", True).eq(meal_to_take, True).execute()
+            if current_time_str == t_evening:
+                meals_to_trigger.append({"meal": "evening", "timing": "after", "meal_name_th": "หลังอาหารเย็น 🌆"})
+            if future_30_str == t_evening:
+                meals_to_trigger.append({"meal": "evening", "timing": "before", "meal_name_th": "ก่อนอาหารเย็น 🌆"})
+                
+            if current_time_str == t_bedtime:
+                meals_to_trigger.append({"meal": "bedtime", "timing": "after", "meal_name_th": "ก่อนนอน 🌙"})
+            if future_30_str == t_bedtime:
+                meals_to_trigger.append({"meal": "bedtime", "timing": "before", "meal_name_th": "ก่อนนอน (ล่วงหน้า 30 นาที) 🌙"})
+
+            # 4. วนลูปส่งการแจ้งเตือนเฉพาะยาที่ตรงเงื่อนไข
+            for trigger in meals_to_trigger:
+                meal_col = trigger["meal"]
+                timing = trigger["timing"]
+                meal_name_th = trigger["meal_name_th"]
+                
+                # ค้นหายาที่ผูกกับเวลาและประเภทก่อน/หลังอาหารนี้
+                reminders_res = supabase.table("reminder_schedules").select("drug_name")\
+                    .eq("line_uid", uid).eq("is_active", True).eq(meal_col, True).eq("meal_timing", timing).execute()
                 drugs = reminders_res.data
                 
                 if drugs:
-                    # 🎯 สร้างกล่องรายการยาแบบไดนามิก (มีปุ่ม "ยาหมด" แต่ละตัว)
                     drug_list_contents = []
                     for d in drugs:
                         drug_name = d["drug_name"]
@@ -257,31 +272,16 @@ def check_reminder():
                             "margin": "md",
                             "contents": [
                                 {
-                                    "type": "text",
-                                    "text": f"💊 {drug_name}",
-                                    "size": "sm",
-                                    "weight": "bold",
-                                    "color": "#333333",
-                                    "gravity": "center",
-                                    "wrap": True,
-                                    "flex": 2 # ให้พื้นที่ชื่อยา 2 ส่วน
+                                    "type": "text", "text": f"💊 {drug_name}", "size": "sm", "weight": "bold", 
+                                    "color": "#333333", "gravity": "center", "wrap": True, "flex": 2
                                 },
                                 {
-                                    "type": "button",
-                                    "style": "secondary",
-                                    "height": "sm",
-                                    "flex": 1, # ให้พื้นที่ปุ่ม 1 ส่วน
-                                    "action": {
-                                        "type": "postback", 
-                                        "label": "ยาหมด", 
-                                        # ส่งข้อมูลไปว่าต้องการหยุดยาตัวไหน
-                                        "data": f"action=stop_drug&drug={drug_name}"
-                                    }
+                                    "type": "button", "style": "secondary", "height": "sm", "flex": 1,
+                                    "action": {"type": "postback", "label": "ยาหมด", "data": f"action=stop_drug&drug={drug_name}"}
                                 }
                             ]
                         })
 
-                    # 5. ส่งแจ้งเตือนแบบ Flex Message โฉมใหม่
                     flex_alert = {
                         "type": "bubble",
                         "size": "mega",
@@ -297,7 +297,6 @@ def check_reminder():
                             "type": "box",
                             "layout": "vertical",
                             "spacing": "md",
-                            # นำส่วนหัว มาบวกกับ รายการยาที่วนลูปไว้ด้านบน
                             "contents": [
                                 {"type": "text", "text": f"มื้อ: {meal_name_th}", "weight": "bold", "size": "md", "color": "#1DB446"},
                                 {"type": "separator", "margin": "md"}
@@ -309,17 +308,12 @@ def check_reminder():
                             "spacing": "sm",
                             "contents": [
                                 {
-                                    "type": "button",
-                                    "style": "primary",
-                                    "color": "#1DB446",
-                                    "height": "sm",
-                                    "action": {"type": "postback", "label": "✅ กินยาทั้งหมดแล้ว", "data": f"action=take_pill&meal={meal_to_take}"}
+                                    "type": "button", "style": "primary", "color": "#1DB446", "height": "sm",
+                                    "action": {"type": "postback", "label": "✅ กินยาทั้งหมดแล้ว", "data": f"action=take_pill&meal={meal_col}"}
                                 },
                                 {
-                                    "type": "button",
-                                    "style": "secondary",
-                                    "height": "sm",
-                                    "action": {"type": "postback", "label": "💤 เลื่อน 15 นาที", "data": f"action=snooze&meal={meal_to_take}"}
+                                    "type": "button", "style": "secondary", "height": "sm",
+                                    "action": {"type": "postback", "label": "💤 เลื่อน 15 นาที", "data": f"action=snooze&meal={meal_col}"}
                                 }
                             ]
                         }
@@ -329,12 +323,9 @@ def check_reminder():
                         uid, 
                         FlexSendMessage(alt_text=f"เตือนกินยา: {meal_name_th}", contents=flex_alert)
                     )
-                    print(f"✅ ส่ง Flex Message แจ้งเตือนให้ {uid} สำเร็จ (ยา {len(drugs)} รายการ)")
                     count_messages_sent += 1
-        if count_messages_sent > 0:
-            print(f"🎉 [CRON-SUCCESS] เวลา {current_time} น. | ส่งแจ้งเตือนกินยาสำเร็จ {count_messages_sent} รายการ")
 
-        return {"status": "success", "message": f"เช็กเวลา {current_time} น. สำเร็จ ส่งแจ้งเตือนไป {count_messages_sent} รายการ"}
+        return {"status": "success", "message": f"เช็กเวลาสำเร็จ ส่งแจ้งเตือนไป {count_messages_sent} รายการ"}
 
     except Exception as e:
         print(f"❌ Error in cron job: {e}")
