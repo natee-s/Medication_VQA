@@ -409,7 +409,7 @@ def handle_image(event):
         "Content-Type": "application/json",
         "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"
     }
-    data_loading = {"chatId": event.source.user_id, "loadingSeconds": 10}
+    data_loading = {"chatId": event.source.user_id, "loadingSeconds": 30}
     requests.post(url, headers=headers, json=data_loading)
 
     # --- ดาวน์โหลดรูปภาพจาก LINE ---
@@ -752,6 +752,17 @@ def handle_text_message(event):
     user_id = event.source.user_id
 
     print(f"💬 ได้รับข้อความจาก {user_id}: {user_text}")
+
+    # 👇 [เพิ่มใหม่] ส่งสถานะ "กำลังพิมพ์..." ให้ฝั่งข้อความ
+    url = "https://api.line.me/v2/bot/chat/loading/start"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"
+    }
+    # สำหรับข้อความมักจะประมวลผลเร็วกว่ารูป ตั้งเผื่อไว้ที่ 20 วินาทีครับ
+    data_loading = {"chatId": user_id, "loadingSeconds": 20}
+    requests.post(url, headers=headers, json=data_loading)
+    # 👆 สิ้นสุดส่วนที่เพิ่มใหม่
 
     # ==========================================
     # ⚡ [ดักจับพิเศษ] คำสั่งจาก Rich Menu
