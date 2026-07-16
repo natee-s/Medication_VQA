@@ -680,6 +680,40 @@ def handle_postback(event):
             reply_text = f"💤 รับทราบครับ เลื่อนการแจ้งเตือนออกไป 15 นาที ถ้าพร้อมทานยาแล้ว อย่าลืมหยิบมาทานนะครับ"
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
 
+    # ----------------------------------------
+    # กรณีที่ 4: ผู้ใช้กดเปลี่ยนเวลาจาก Datetime Picker
+    # ----------------------------------------
+    elif data.startswith("action=update_time"):
+        postback_dict = dict(parse_qsl(data))
+        meal = postback_dict.get("meal")
+        
+        # ดึงเวลาที่ User เลื่อนเลือกมาจาก params ของ LINE (จะได้ออกมาเป็น 'HH:MM' เช่น '08:30')
+        selected_time = event.postback.params.get('time') if event.postback.params else None
+        
+        if selected_time:
+            meal_col = f"default_{meal}" # แปลงเป็นชื่อคอลัมน์ เช่น default_morning
+            meal_th = {"morning": "มื้อเช้า", "noon": "มื้อกลางวัน", "evening": "มื้อเย็น", "bedtime": "ก่อนนอน"}.get(meal, "")
+            
+            try:
+                # เติมวินาทีให้ครบฟอร์แมต time ของ DB (HH:MM:SS)
+                db_time = f"{selected_time}:00"
+                
+                # เช็คก่อนว่ามี Profile User คนนี้หรือยัง
+                user_check = supabase.table("user_profiles").select("line_uid").eq("line_uid", user_id).execute()
+                if not user_check.data:
+                    # ถ้ายังไม่มีให้สร้างใหม่พร้อมเวลาที่เลือก
+                    supabase.table("user_profiles").insert({"line_uid": user_id, meal_col: db_time}).execute()
+                else:
+                    # ถ้ามีแล้วให้อัปเดตเวลาทับลงไป
+                    supabase.table("user_profiles").update({meal_col: db_time}).eq("line_uid", user_id).execute()
+
+                reply_text = f"✅ บันทึกเวลาแจ้งเตือน {meal_th} เป็นเวลา {selected_time} น. เรียบร้อยครับ\nระบบจะใช้เวลานี้แจ้งเตือนคุณทุกวันครับ"
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+                print(f"✅ อัปเดตเวลา {meal_th} ให้ {user_id} เป็น {db_time}")
+
+            except Exception as e:
+                print(f"❌ Error updating time: {e}")
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text="❌ เกิดข้อผิดพลาดในการบันทึกเวลา กรุณาลองใหม่อีกครั้งครับ"))
 
 # ==========================================
 # เส้นทางสำหรับทดสอบ Database โดยเฉพาะ (ฉบับ Debug)
@@ -753,10 +787,78 @@ def handle_text_message(event):
         return # หยุดการทำงานตรงนี้ ไม่ต้องส่งไปหา AI
 
     elif user_text == "เปลี่ยนเวลาแจ้งเตือน":
-        # (Prototype) ส่งข้อความแจ้งลูกค้าไปก่อน เดี๋ยวเราค่อยมาต่อยอดทำ Flex Message ให้เลือกเวลา
-        reply_text = "ฟีเจอร์นี้กำลังอยู่ในช่วงพัฒนาครับ 🛠️ ในอนาคตคุณจะสามารถปรับเปลี่ยนเวลาทานยา (เช้า/กลางวัน/เย็น/ก่อนนอน) ให้ตรงกับไลฟ์สไตล์ของคุณได้ด้วยตัวเองเลยครับ!"
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
-        return # หยุดการทำงานตรงนี้ ไม่ต้องส่งไปหา AI
+        # สร้าง Flex Message ดึง Widget นาฬิกาของ LINE ขึ้นมาให้เลือก
+        flex_time_picker = {
+            "type": "bubble",
+            "size": "kilo",
+            "header": {
+                "type": "box",
+                "layout": "vertical",
+                "backgroundColor": "#1DB446",
+                "contents": [
+                    {"type": "text", "text": "⏰ ตั้งเวลาแจ้งเตือนใหม่", "weight": "bold", "color": "#FFFFFF", "size": "md"}
+                ]
+            },
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "sm",
+                "contents": [
+                    {"type": "text", "text": "เลือกช่วงเวลาที่คุณต้องการให้ระบบเตือนกินยาครับ", "wrap": True, "size": "sm", "color": "#666666"},
+                    {"type": "separator", "margin": "md"},
+                    {
+                        "type": "button",
+                        "style": "secondary",
+                        "height": "sm",
+                        "margin": "sm",
+                        "action": {
+                            "type": "datetimepicker",
+                            "label": "🌅 มื้อเช้า",
+                            "data": "action=update_time&meal=morning",
+                            "mode": "time"
+                        }
+                    },
+                    {
+                        "type": "button",
+                        "style": "secondary",
+                        "height": "sm",
+                        "margin": "sm",
+                        "action": {
+                            "type": "datetimepicker",
+                            "label": "☀️ มื้อกลางวัน",
+                            "data": "action=update_time&meal=noon",
+                            "mode": "time"
+                        }
+                    },
+                    {
+                        "type": "button",
+                        "style": "secondary",
+                        "height": "sm",
+                        "margin": "sm",
+                        "action": {
+                            "type": "datetimepicker",
+                            "label": "🌆 มื้อเย็น",
+                            "data": "action=update_time&meal=evening",
+                            "mode": "time"
+                        }
+                    },
+                    {
+                        "type": "button",
+                        "style": "secondary",
+                        "height": "sm",
+                        "margin": "sm",
+                        "action": {
+                            "type": "datetimepicker",
+                            "label": "🌙 ก่อนนอน",
+                            "data": "action=update_time&meal=bedtime",
+                            "mode": "time"
+                        }
+                    }
+                ]
+            }
+        }
+        line_bot_api.reply_message(event.reply_token, FlexSendMessage(alt_text="ตั้งเวลาแจ้งเตือน", contents=flex_time_picker))
+        return # หยุดการทำงานตรงนี้
     # ==========================================
 
     # 1. 🎯 สร้าง Prompt ให้ Gemini ช่วยแยกแยะเจตนา (Intent Classification)
