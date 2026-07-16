@@ -924,10 +924,13 @@ def handle_text_message(event):
             )
             records = db_res.data
 
+            # 👇 เริ่มก๊อปปี้จากตรงนี้ไปวางทับ 👇
+            # 3.3 นำข้อมูลที่เจอมาสร้าง Context ส่งให้ Gemini สรุปคำตอบ
+            
+            context_text = "ไม่พบข้อมูลยาที่ตรงกับคำถามในฐานข้อมูลร้าน"
             if records:
-                # 3.3 นำข้อมูลที่เจอมาสร้าง Context ส่งให้ Gemini สรุปคำตอบ
                 context_texts = [f"- {r['trade_name']}: {r['rag_text']}" for r in records]
-                context_str = "\n".join(context_texts)
+                context_text = "\n".join(context_texts)
                 
             # สเต็ปที่ 1: สร้าง Prompt บังคับโครงสร้าง JSON
             final_prompt = f"""
@@ -945,20 +948,19 @@ def handle_text_message(event):
 
             # สเต็ปที่ 2: สั่ง Gemini ให้ตอบกลับมาเป็น JSON
             final_res = client.models.generate_content(
-                model='gemini-2.0-flash', # หรือโมเดลเวอร์ชันที่คุณแมนกำลังใช้งานอยู่
+                model='gemini-2.0-flash', 
                 contents=[final_prompt],
-                config={"response_mime_type": "application/json"} # 👈 หัวใจสำคัญที่ห้ามลืม!
+                config={"response_mime_type": "application/json"}
             )
 
             # สเต็ปที่ 3: ประกอบร่าง Flex Message แบบ Dynamic
             try:
-                # แปลงข้อความ JSON จาก AI ให้กลายเป็น Dictionary ของ Python
-                ai_data = json.loads(final_res.text)
+                # เพิ่มระบบเคลียร์ Markdown เผื่อ AI แถมมา
+                clean_json_text = final_res.text.strip().replace("```json", "").replace("```", "").strip()
+                ai_data = json.loads(clean_json_text)
                 
-                # สร้างกล่องเก็บเนื้อหาแบบค่อยๆ เติม
                 body_contents = []
                 
-                # --- ส่วนที่ 1: อาการและคำแนะนำ (ส่วนนี้บังคับมีเสมอ) ---
                 body_contents.append({
                     "type": "text", "text": f"🩺 อาการ: {ai_data.get('symptom', 'ไม่ระบุ')}", 
                     "weight": "bold", "color": "#1DB446", "wrap": True
@@ -968,7 +970,6 @@ def handle_text_message(event):
                     "wrap": True, "size": "sm", "margin": "md", "color": "#333333"
                 })
                 
-                # --- ส่วนที่ 2: ยาที่แนะนำ (เช็กก่อนว่ามีไหม ถ้า AI ส่งมาค่อยเพิ่มกล่องนี้) ---
                 if ai_data.get('recommended_drug'):
                     body_contents.append({"type": "separator", "margin": "lg"})
                     body_contents.append({
@@ -980,7 +981,6 @@ def handle_text_message(event):
                         "wrap": True, "size": "sm", "color": "#666666"
                     })
 
-                # --- ส่วนที่ 3: ข้อควรระวัง (เช็กก่อนว่ามีไหม) ---
                 if ai_data.get('warning'):
                     body_contents.append({"type": "separator", "margin": "lg"})
                     body_contents.append({
@@ -992,7 +992,6 @@ def handle_text_message(event):
                         "wrap": True, "size": "sm", "color": "#666666"
                     })
 
-                # ประกอบร่างใส่ Flex Message โครงสร้างหลัก
                 flex_rag_reply = {
                     "type": "bubble",
                     "header": {
@@ -1001,18 +1000,16 @@ def handle_text_message(event):
                     },
                     "body": {
                         "type": "box", "layout": "vertical", "spacing": "sm",
-                        "contents": body_contents # 👈 เอา Array กล่องทั้งหมดที่ต่อเสร็จแล้วมาใส่ตรงนี้
+                        "contents": body_contents
                     },
                     "footer": {
                         "type": "box", "layout": "vertical",
                         "contents": [
-                            # ปุ่มสามารถเปลี่ยนเป็น Link ไปหาส่วนติดต่อร้านจริงๆ ได้ในอนาคตครับ
                             {"type": "button", "style": "primary", "action": {"type": "message", "label": "ติดต่อเภสัชกร", "text": "ติดต่อเภสัชกร"}}
                         ]
                     }
                 }
                 
-                # ส่ง Flex Message กลับไปหาลูกค้า
                 line_bot_api.reply_message(
                     event.reply_token, 
                     FlexSendMessage(alt_text="คำแนะนำสุขภาพจากบ้านยาสุขใจ", contents=flex_rag_reply)
@@ -1020,22 +1017,22 @@ def handle_text_message(event):
 
             except Exception as e:
                 print(f"❌ Error parsing JSON or building Flex: {e}")
-                # Fallback: ดักไว้เผื่อ Gemini เบลอส่ง JSON พัง จะได้ตอบเป็นข้อความธรรมดาแทนบอทเงียบ
                 line_bot_api.reply_message(
                     event.reply_token, 
                     TextSendMessage(text="ขออภัยครับ ระบบจัดรูปแบบข้อมูลขัดข้องเบื้องต้น แต่เภสัชกรได้รับข้อความแล้ว รบกวนรอสักครู่นะครับ 👨‍⚕️")
                 )
-            except Exception as e:
-                error_msg = str(e)
-                print(f"❌ Error in text message NLP: {error_msg}")
-                
-                if "503" in error_msg or "UNAVAILABLE" in error_msg or "429" in error_msg:
-                    reply_text = "ขออภัยครับคุณลูกค้า ตอนนี้ผู้ช่วยเภสัชกร AI กำลังติดสายให้บริการคิวอื่นอยู่ 😅 รบกวนรอสัก 1 นาทีแล้วพิมพ์ถามใหม่อีกครั้งนะครับ 🙏"
-                else:
-                    reply_text = "ขออภัยครับ ตอนนี้ระบบคัดกรองข้อความขัดข้องชั่วคราว รบกวนติดต่อเภสัชกรที่หน้าร้านได้เลยนะครับ 👨‍⚕️"
-                    
-                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
 
+    # 👇 การย่อหน้าตรงนี้แหละครับที่ถูกต้อง! มันต้องออกมาระดับเดียวกับ try ด้านบนสุด
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ Error in text message NLP: {error_msg}")
+        
+        if "503" in error_msg or "UNAVAILABLE" in error_msg or "429" in error_msg:
+            reply_text = "ขออภัยครับคุณลูกค้า ตอนนี้ผู้ช่วยเภสัชกร AI กำลังติดสายให้บริการคิวอื่นอยู่ 😅 รบกวนรอสัก 1 นาทีแล้วพิมพ์ถามใหม่อีกครั้งนะครับ 🙏"
+        else:
+            reply_text = "ขออภัยครับ ตอนนี้ระบบคัดกรองข้อความขัดข้องชั่วคราว รบกวนติดต่อเภสัชกรที่หน้าร้านได้เลยนะครับ 👨‍⚕️"
+            
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
 # ==========================================
 # ⚡ ดักจับข้อความประเภทอื่นๆ (Edge Cases & Error Handling)
 # ==========================================
