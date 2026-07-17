@@ -40,8 +40,9 @@ def generate_embeddings():
         try:
             # 3. เรียกใช้โมเดล text-embedding-004 เพื่อแปลงข้อความเป็น Vector
             result = ai_client.models.embed_content(
-                model='text-embedding-004',
+                model='gemini-embedding-001',
                 contents=text_to_embed,
+                config=types.EmbedContentConfig(output_dimensionality=768) # 👈 เพิ่มตรงนี้
             )
             
             # ดึงค่าชุดตัวเลข (768 มิติ) ออกมา
