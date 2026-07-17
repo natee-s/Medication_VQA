@@ -2,6 +2,9 @@ import os
 from supabase import create_client, Client
 from google import genai
 from dotenv import load_dotenv
+from google.genai import types
+
+load_dotenv()
 
 # ==========================================
 # 1. ใส่ API Keys ของคุณแมนตรงนี้ครับ
@@ -23,7 +26,7 @@ def generate_embeddings():
     
     # 1. ดึงข้อมูลยาที่คอลัมน์ embedding ยังเป็นค่าว่าง (null)
     # หมายเหตุ: หาก Primary Key ของคุณแมนไม่ได้ชื่อ 'id' ให้แก้ตรง "id, trade_name..." ด้วยนะครับ
-    response = supabase.table("Medication_VQA").select("id, trade_name, rag_text, indication").is_("embedding", "null").execute()
+    response = supabase.table("Medication_VQA").select("source_row_number, trade_name, rag_text, indication").is_("embedding", "null").execute()
     records = response.data
 
     if not records:
@@ -49,7 +52,7 @@ def generate_embeddings():
             embedding_vector = result.embeddings[0].values
 
             # 4. อัปเดตชุดตัวเลขนี้ กลับลงไปในแถวเดิมของตาราง
-            supabase.table("Medication_VQA").update({"embedding": embedding_vector}).eq("id", record["id"]).execute()
+            supabase.table("Medication_VQA").update({"embedding": embedding_vector}).eq("source_row_number", record["source_row_number"]).execute()
             
             print(f"✅ แปลงและบันทึก Vector สำเร็จ: {record['trade_name']}")
             
