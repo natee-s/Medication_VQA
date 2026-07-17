@@ -914,7 +914,7 @@ def handle_text_message(event):
                     "match_symptoms", 
                     {
                         "query_embedding": query_vector,
-                        "match_threshold": 0.4, # ปรับจูนได้: ค่ายิ่งใกล้ 1 ยิ่งต้องเหมือนเป๊ะ (แนะนำ 0.3 - 0.5)
+                        "match_threshold": 0.0, # ปรับจูนได้: ค่ายิ่งใกล้ 1 ยิ่งต้องเหมือนเป๊ะ (แนะนำ 0.3 - 0.5)
                         "match_count": 3        # ดึงยาที่ตรงกับอาการมากที่สุดมา 3 อันดับแรก
                     }
                 ).execute()
@@ -922,6 +922,11 @@ def handle_text_message(event):
                 records = db_res.data
                 print(f"✅ [Vector Search] ดึงข้อมูลยาที่เกี่ยวข้องมาได้ {len(records)} รายการ")
                 
+                # 👈 เพิ่มบล็อกนี้เพื่อแอบดูคะแนนความเหมือนที่แท้จริง
+                if records:
+                    for r in records:
+                        print(f"   -> [DEBUG] เจอข้อความของยา: {r.get('trade_name')} | ได้คะแนนความเหมือน: {r.get('similarity'):.4f}")
+                        
             except Exception as e:
                 print(f"❌ [Vector Search] Error: {e}")
                 records = []
