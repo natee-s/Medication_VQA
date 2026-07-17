@@ -895,34 +895,42 @@ def handle_text_message(event):
         
         # 3. 🔀 Router: ส่งข้อความตอบกลับเบื้องต้นตาม Intent
         if "MED_QUERY" in intent:
-            # 3.1 สกัดคำค้นหา (Keyword) แบบกว้าง (Broad Match)
-            extract_prompt = """
-            จงดึง 'คำหลักสั้นๆ' ที่เป็นอาการป่วย หรือ ชื่อยา จากข้อความของผู้ใช้ เพื่อนำไปค้นหาในฐานข้อมูล
+            # =======================================================
+            # ✂️ โค้ดชุดใหม่: Vector Search (Semantic RAG) ✂️
+            # =======================================================
+            print(f"🔍 [Vector Search] กำลังวิเคราะห์อาการ: {user_text}")
             
-            ข้อกำหนดสำคัญ (ต้องทำตามอย่างเคร่งครัด):
-            1. หมวดอาการปวด: ไม่ว่าผู้ใช้จะพิมพ์ว่า ปวดหัว, ปวดเข่า, ปวดท้อง, ปวดฟัน, ปวดหลัง ให้สกัดเหลือแค่คำว่า "ปวด" คำเดียวเท่านั้น
-            2. หมวดภูมิแพ้: คัดจมูก, น้ำมูกไหล ให้สกัดเหลือแค่ "น้ำมูก"
-            3. หมวดไข้: ตัวร้อน, เป็นไข้ ให้สกัดเหลือแค่ "ไข้"
-            4. หมวดไอ: ไอแห้ง, มีเสมหะ ให้สกัดเหลือแค่ "ไอ" หรือ "เสมหะ"
-            
-            กฎเหล็ก: ตอบแค่คำหลัก 'เพียงคำเดียว' สั้นๆ ห้ามมีประโยคอื่น ห้ามมีเครื่องหมาย
-            """
-            keyword_res = client.models.generate_content(
-                model='gemini-2.5-flash', # ⚠️ แก้เป็น 2.5 ให้ตรงกับระบบหลัก
-                contents=[extract_prompt, f"ข้อความ: {user_text}"]
-            )
-            # เคลียร์เครื่องหมายหรือช่องว่างแปลกๆ ที่ AI อาจแถมมา
-            keyword = keyword_res.text.strip().replace("*", "").replace('"', "").replace("'", "")
-            print(f"🔍 [RAG] Keyword สำหรับค้นหา: {keyword}")
+            try:
+                # 3.1 แปลงประโยคของลูกค้าให้เป็น Vector
+                embed_res = client.models.embed_content(
+                    model='text-embedding-004',
+                    contents=user_text
+                )
+                query_vector = embed_res.embeddings[0].values
 
-            # 3.2 ค้นหาข้อมูลควบทั้งคอลัมน์ rag_text และ indication ด้วยคำสั่ง .or_()
-            db_res = (
-                supabase.table("Medication_VQA")
-                .select("trade_name, rag_text")
-                .or_(f"rag_text.ilike.%{keyword}%,indication.ilike.%{keyword}%")
-                .execute()
-            )
-            records = db_res.data
+                # 3.2 นำ Vector ไปค้นหาใน Supabase ผ่าน RPC ฟังก์ชันที่เราสร้างไว้
+                db_res = supabase.rpc(
+                    "match_symptoms", 
+                    {
+                        "query_embedding": query_vector,
+                        "match_threshold": 0.4, # ปรับจูนได้: ค่ายิ่งใกล้ 1 ยิ่งต้องเหมือนเป๊ะ (แนะนำ 0.3 - 0.5)
+                        "match_count": 3        # ดึงยาที่ตรงกับอาการมากที่สุดมา 3 อันดับแรก
+                    }
+                ).execute()
+                
+                records = db_res.data
+                print(f"✅ [Vector Search] ดึงข้อมูลยาที่เกี่ยวข้องมาได้ {len(records)} รายการ")
+                
+            except Exception as e:
+                print(f"❌ [Vector Search] Error: {e}")
+                records = []
+            # =======================================================
+            
+            # 👇 โค้ดส่วน 3.3 ด้านล่างนี้ (การสร้าง context_text) ปล่อยไว้เหมือนเดิมได้เลยครับ
+            context_text = "ไม่พบข้อมูลยาที่ตรงกับคำถามในฐานข้อมูลร้าน"
+            if records:
+                context_texts = [f"- {r['trade_name']}: {r['rag_text']}" for r in records]
+                context_text = "\n".join(context_texts)
 
             # 👇 เริ่มก๊อปปี้จากตรงนี้ไปวางทับ 👇
             # 3.3 นำข้อมูลที่เจอมาสร้าง Context ส่งให้ Gemini สรุปคำตอบ
