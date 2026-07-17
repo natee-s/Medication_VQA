@@ -901,10 +901,11 @@ def handle_text_message(event):
             print(f"🔍 [Vector Search] กำลังวิเคราะห์อาการ: {user_text}")
             
             try:
-                # 3.1 แปลงประโยคของลูกค้าให้เป็น Vector
+                # 3.1 แปลงประโยคของลูกค้าให้เป็น Vector (อัปเดตโมเดลเป็น gemini-embedding-001)
                 embed_res = client.models.embed_content(
-                    model='text-embedding-004',
-                    contents=user_text
+                    model='gemini-embedding-001',
+                    contents=user_text,
+                    config=types.EmbedContentConfig(output_dimensionality=768) # 👈 บังคับให้เหลือ 768 มิติ
                 )
                 query_vector = embed_res.embeddings[0].values
 
