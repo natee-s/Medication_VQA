@@ -8,6 +8,7 @@ from linebot.models import (
     ImageMessage,
     FlexSendMessage,
     PostbackEvent,
+    FollowEvent,
     StickerMessage,
     VideoMessage,
     AudioMessage,
@@ -21,7 +22,16 @@ from google import genai
 from google.genai import types
 import json
 import requests
-from supabase import create_client, Client
+from services.supabase_service import (
+    DEFAULT_LANGUAGE,
+    SUPPORTED_LANGUAGES,
+    SUPABASE_URL,
+    ensure_user_profile,
+    get_user_language,
+    normalize_language,
+    set_user_language,
+    supabase,
+)
 from urllib.parse import parse_qsl
 from datetime import datetime
 import pytz
@@ -173,6 +183,110 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 # ประกาศเรียกใช้งาน Client ของ Gemini ด้วยรหัสคีย์ที่เราฝากไว้บน Render
 ai_client = genai.Client(api_key=GEMINI_API_KEY)
+
+
+def load_messages():
+    locale_path = os.path.join(os.path.dirname(__file__), "locales", "i18n.json")
+    with open(locale_path, "r", encoding="utf-8") as file:
+        return json.load(file)
+
+
+MESSAGES = load_messages()
+
+LANGUAGE_OPTIONS = (
+    {"code": "th", "label": "🇹🇭 ไทย", "ai_name": "Thai"},
+    {"code": "en", "label": "🇬🇧 English", "ai_name": "English"},
+    {"code": "my", "label": "🇲🇲 မြန်မာ", "ai_name": "Burmese"},
+    {"code": "lo", "label": "🇱🇦 ລາວ", "ai_name": "Lao"},
+    {"code": "zh", "label": "🇨🇳 中文", "ai_name": "Simplified Chinese"},
+)
+AI_LANGUAGE_NAMES = {item["code"]: item["ai_name"] for item in LANGUAGE_OPTIONS}
+LANGUAGE_COMMANDS = {"เปลี่ยนภาษา", "Change Language", "เปลี่ยนภาษา / Change Language"}
+
+
+def normalize_command_text(text: str) -> str:
+    return " ".join((text or "").replace("／", "/").split())
+
+
+def is_language_command(text: str) -> bool:
+    normalized_text = normalize_command_text(text)
+    lowered_text = normalized_text.lower()
+    lowered_commands = {command.lower() for command in LANGUAGE_COMMANDS}
+
+    return (
+        normalized_text in LANGUAGE_COMMANDS
+        or lowered_text in lowered_commands
+        or ("เปลี่ยนภาษา" in normalized_text and "change language" in lowered_text)
+    )
+
+
+def t(lang: str, key: str, **kwargs) -> str:
+    language = normalize_language(lang)
+    thai_messages = MESSAGES.get(DEFAULT_LANGUAGE, {})
+    message = (
+        MESSAGES.get(language, {}).get(key)
+        or thai_messages.get(key)
+        or thai_messages.get("generic_processing_error", "")
+    )
+    return message.format(**kwargs)
+
+
+def get_ai_language_name(lang: str) -> str:
+    return AI_LANGUAGE_NAMES.get(normalize_language(lang), "Thai")
+
+
+def build_language_instruction(lang: str) -> str:
+    return f"You must answer the user only in: {get_ai_language_name(lang)}."
+
+
+def build_language_picker(lang: str = DEFAULT_LANGUAGE) -> dict:
+    return {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#1DB446",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": t(lang, "language_picker_title"),
+                    "weight": "bold",
+                    "color": "#FFFFFF",
+                    "size": "lg",
+                }
+            ],
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "sm",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": t(lang, "language_picker_subtitle"),
+                    "wrap": True,
+                    "size": "sm",
+                    "color": "#555555",
+                },
+                {"type": "separator", "margin": "md"},
+            ]
+            + [
+                {
+                    "type": "button",
+                    "style": "secondary",
+                    "height": "sm",
+                    "action": {
+                        "type": "postback",
+                        "label": option["label"],
+                        "data": f"action=set_language&lang={option['code']}",
+                    },
+                }
+                for option in LANGUAGE_OPTIONS
+            ],
+        },
+    }
+
 
 @app.get("/")
 def root():
@@ -351,28 +465,6 @@ async def webhook(request: Request):
 
 
 # ==========================================
-# 2.1. การตั้งค่าเชื่อมต่อฐานข้อมูล Supabase
-# ==========================================
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-
-# ตรวจสอบเบื้องต้นว่ามีการตั้งค่า Key หรือยัง
-if not SUPABASE_URL or not SUPABASE_KEY:
-    print("⚠️ Warning: SUPABASE_URL หรือ SUPABASE_KEY ยังไม่ได้ตั้งค่าใน Environment Variables")
-
-# สร้าง Client สำหรับเชื่อมต่อฐานข้อมูล
-try:
-    # จะเริ่มสร้าง client ก็ต่อเมื่อมีค่าครบทั้งสองตัว
-    if SUPABASE_URL and SUPABASE_KEY:
-        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-        print("✅ เชื่อมต่อ Supabase สำเร็จ!")
-    else:
-        supabase = None
-except Exception as e:
-    print(f"❌ เชื่อมต่อ Supabase ไม่สำเร็จ: {e}")
-    supabase = None
-
-# ==========================================
 # ฟังก์ชันค้นหาข้อมูลยา (RAG Search)
 # ==========================================
 def search_medicine_in_db(drug_name: str):
@@ -401,15 +493,32 @@ def search_medicine_in_db(drug_name: str):
 # ==========================================
 # 3. ฟังก์ชันหลัก: จัดการเมื่อมีผู้ใช้ส่งรูปภาพเข้ามา
 # ==========================================
+@handler.add(FollowEvent)
+def handle_follow(event):
+    user_id = event.source.user_id
+    ensure_user_profile(user_id)
+    line_bot_api.reply_message(
+        event.reply_token,
+        FlexSendMessage(
+            alt_text=t(DEFAULT_LANGUAGE, "language_picker_alt"),
+            contents=build_language_picker(DEFAULT_LANGUAGE),
+        ),
+    )
+
+
 @handler.add(MessageEvent, message=ImageMessage)
 def handle_image(event):
+    user_id = event.source.user_id
+    user_language = get_user_language(user_id)
+    language_instruction = build_language_instruction(user_language)
+
     # --- ส่งสถานะ "กำลังพิมพ์..." (Loading Animation) ---
     url = "https://api.line.me/v2/bot/chat/loading/start"
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"
     }
-    data_loading = {"chatId": event.source.user_id, "loadingSeconds": 30}
+    data_loading = {"chatId": user_id, "loadingSeconds": 30}
     requests.post(url, headers=headers, json=data_loading)
 
     # --- ดาวน์โหลดรูปภาพจาก LINE ---
@@ -457,7 +566,8 @@ def handle_image(event):
 {
 "error": "rotated หรือ null",
 "search_keyword": "ชื่อยาภาษาอังกฤษ หรือ null"
-}"""
+}""",
+                f"{language_instruction} Keep JSON keys exactly as specified; do not translate search_keyword."
             ]
         )
         
@@ -474,13 +584,13 @@ def handle_image(event):
             if data.get("error") == "rotated":
                 line_bot_api.reply_message(
                     event.reply_token,
-                    TextSendMessage(text="📸 รูปภาพตะแคงหรือกลับหัวครับ กรุณาถ่ายฉลากยาให้ตั้งตรงแล้วส่งมาใหม่อีกครั้งนะครับ")
+                    TextSendMessage(text=t(user_language, "ocr_rotated_image"))
                 )
                 return
 
             search_keyword = data.get("search_keyword")
             if not search_keyword:
-                line_bot_api.reply_message(event.reply_token, TextSendMessage(text="⚠️ ระบบอ่านชื่อยาบนฉลากไม่ชัดเจน กรุณาถ่ายใหม่อีกครั้งครับ"))
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=t(user_language, "ocr_unclear_drug_name")))
                 return
 
             # ----------------------------------------------------
@@ -491,7 +601,7 @@ def handle_image(event):
             if not db_data:
                 line_bot_api.reply_message(
                     event.reply_token, 
-                    TextSendMessage(text=f"🔍 ระบบสกัดชื่อยาได้ว่า '{search_keyword}' แต่ไม่พบข้อมูลนี้ในฐานข้อมูลครับ")
+                    TextSendMessage(text=t(user_language, "ocr_no_database_match", drug=search_keyword))
                 )
                 return
             
@@ -577,15 +687,32 @@ def handle_image(event):
             )
 
         except json.JSONDecodeError:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"พบปัญหาในการจัดรูปแบบข้อมูลจาก AI:\n{raw_text}"))
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=t(user_language, "ai_format_error")))
             
     except Exception as e:
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"⚠️ เกิดข้อผิดพลาดในระบบประมวลผล: {str(e)}"))    
+        print(f"⚠️ Error in image processing: {e}")
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=t(user_language, "generic_processing_error")))    
 
 @handler.add(PostbackEvent)
 def handle_postback(event):
     data = event.postback.data
     user_id = event.source.user_id
+
+    if data.startswith("action=set_language"):
+        postback_dict = dict(parse_qsl(data))
+        requested_language = postback_dict.get("lang")
+        selected_language = normalize_language(requested_language)
+        if requested_language in SUPPORTED_LANGUAGES and set_user_language(user_id, selected_language):
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text=t(selected_language, "language_saved")),
+            )
+        else:
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text=t(DEFAULT_LANGUAGE, "generic_processing_error")),
+            )
+        return
 
     # ----------------------------------------
     # กรณีที่ 1: ผู้ใช้กดปุ่ม "✅ รับทราบ"
@@ -750,8 +877,20 @@ def test_database_connection(drug_name: str):
 def handle_text_message(event):
     user_text = event.message.text
     user_id = event.source.user_id
+    user_language = get_user_language(user_id)
 
     print(f"💬 ได้รับข้อความจาก {user_id}: {user_text}")
+
+    if is_language_command(user_text):
+        print(f"🌐 เปิดตัวเลือกภาษาให้ {user_id} จากข้อความ: {user_text!r}")
+        line_bot_api.reply_message(
+            event.reply_token,
+            FlexSendMessage(
+                alt_text=t(user_language, "language_picker_alt"),
+                contents=build_language_picker(user_language),
+            ),
+        )
+        return
 
     # 👇 [เพิ่มใหม่] ส่งสถานะ "กำลังพิมพ์..." ให้ฝั่งข้อความ
     url = "https://api.line.me/v2/bot/chat/loading/start"
@@ -947,9 +1086,11 @@ def handle_text_message(event):
                 context_text = "\n".join(context_texts)
                 
             # สเต็ปที่ 1: สร้าง Prompt บังคับโครงสร้าง JSON
+            language_instruction = build_language_instruction(user_language)
             final_prompt = f"""
             จากข้อมูลร้านยาต่อไปนี้: {context_text}
             จงตอบคำถามของลูกค้า: {user_text}
+            {language_instruction}
 
             กรุณาตอบกลับในรูปแบบ JSON เท่านั้น โดยใช้โครงสร้างดังนี้:
             {{
@@ -1033,7 +1174,7 @@ def handle_text_message(event):
                 print(f"❌ Error parsing JSON or building Flex: {e}")
                 line_bot_api.reply_message(
                     event.reply_token, 
-                    TextSendMessage(text="ขออภัยครับ ระบบจัดรูปแบบข้อมูลขัดข้องเบื้องต้น แต่เภสัชกรได้รับข้อความแล้ว รบกวนรอสักครู่นะครับ 👨‍⚕️")
+                    TextSendMessage(text=t(user_language, "ai_format_error"))
                 )
 
     # 👇 การย่อหน้าตรงนี้แหละครับที่ถูกต้อง! มันต้องออกมาระดับเดียวกับ try ด้านบนสุด
@@ -1042,9 +1183,9 @@ def handle_text_message(event):
         print(f"❌ Error in text message NLP: {error_msg}")
         
         if "503" in error_msg or "UNAVAILABLE" in error_msg or "429" in error_msg:
-            reply_text = "ขออภัยครับคุณลูกค้า ตอนนี้ผู้ช่วยเภสัชกร AI กำลังติดสายให้บริการคิวอื่นอยู่ 😅 รบกวนรอสัก 1 นาทีแล้วพิมพ์ถามใหม่อีกครั้งนะครับ 🙏"
+            reply_text = t(user_language, "generic_processing_error")
         else:
-            reply_text = "ขออภัยครับ ตอนนี้ระบบคัดกรองข้อความขัดข้องชั่วคราว รบกวนติดต่อเภสัชกรที่หน้าร้านได้เลยนะครับ 👨‍⚕️"
+            reply_text = t(user_language, "generic_processing_error")
             
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
 # ==========================================
@@ -1053,10 +1194,8 @@ def handle_text_message(event):
 @handler.add(MessageEvent, message=(StickerMessage, VideoMessage, AudioMessage, LocationMessage, FileMessage))
 def handle_other_messages(event):
     # กำหนดข้อความตอบกลับเมื่อลูกค้าส่งสิ่งที่ไม่รองรับเข้ามา
-    reply_text = (
-        "ขออภัยครับ 🙏 ตอนนี้ผู้ช่วยเภสัชกรยังรองรับแค่การส่ง 'ข้อความ' และ 'รูปภาพ' เท่านั้นครับ\n\n"
-        "หากมีคำถามเรื่องยา สามารถพิมพ์สอบถาม หรือส่งรูปฉลากยามาให้ผมดูแลได้เลยนะครับ 💊"
-    )
+    user_language = get_user_language(event.source.user_id)
+    reply_text = t(user_language, "unsupported_message_type")
     
     try:
         line_bot_api.reply_message(

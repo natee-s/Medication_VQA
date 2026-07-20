@@ -1,0 +1,72 @@
+{
+  "th": {
+    "language_picker_alt": "เลือกภาษา",
+    "language_picker_title": "เลือกภาษา",
+    "language_picker_subtitle": "กรุณาเลือกภาษาที่ต้องการใช้กับผู้ช่วยเภสัชกร",
+    "language_saved": "บันทึกภาษาเรียบร้อยครับ ต่อจากนี้ระบบจะตอบกลับเป็นภาษาไทย",
+    "change_language_command": "เปลี่ยนภาษา",
+    "unsupported_message_type": "ขออภัยครับ 🙏 ตอนนี้ผู้ช่วยเภสัชกรยังรองรับแค่การส่ง 'ข้อความ' และ 'รูปภาพ' เท่านั้นครับ\n\nหากมีคำถามเรื่องยา สามารถพิมพ์สอบถาม หรือส่งรูปฉลากยามาให้ผมดูแลได้เลยนะครับ 💊",
+    "generic_processing_error": "ขออภัยครับ ตอนนี้ระบบคัดกรองข้อความขัดข้องชั่วคราว รบกวนติดต่อเภสัชกรที่หน้าร้านได้เลยนะครับ 👨‍⚕️",
+    "supabase_not_connected": "Supabase not connected",
+    "ocr_rotated_image": "📸 รูปภาพตะแคงหรือกลับหัวครับ กรุณาถ่ายฉลากยาให้ตั้งตรงแล้วส่งมาใหม่อีกครั้งนะครับ",
+    "ocr_unclear_drug_name": "⚠️ ระบบอ่านชื่อยาบนฉลากไม่ชัดเจน กรุณาถ่ายใหม่อีกครั้งครับ",
+    "ocr_no_database_match": "🔍 ระบบสกัดชื่อยาได้ว่า '{drug}' แต่ไม่พบข้อมูลนี้ในฐานข้อมูลครับ",
+    "ai_format_error": "ขออภัยครับ ระบบจัดรูปแบบข้อมูลขัดข้องเบื้องต้น แต่เภสัชกรได้รับข้อความแล้ว รบกวนรอสักครู่นะครับ 👨‍⚕️"
+  },
+  "en": {
+    "language_picker_alt": "Choose language",
+    "language_picker_title": "Choose Language",
+    "language_picker_subtitle": "Please choose the language you want to use with the pharmacist assistant.",
+    "language_saved": "Language saved. I will reply in English from now on.",
+    "change_language_command": "Change Language",
+    "unsupported_message_type": "Sorry 🙏 The pharmacist assistant currently supports only text and image messages.\n\nYou can type a medicine question or send a photo of a medicine label for help. 💊",
+    "generic_processing_error": "Sorry, the message screening system is temporarily unavailable. Please contact the pharmacist at the store.",
+    "supabase_not_connected": "Supabase not connected",
+    "ocr_rotated_image": "📸 The image appears sideways or upside down. Please take the medicine label upright and send it again.",
+    "ocr_unclear_drug_name": "⚠️ I could not read the medicine name clearly. Please take another photo.",
+    "ocr_no_database_match": "🔍 I detected the medicine name '{drug}', but could not find it in the database.",
+    "ai_format_error": "Sorry, the system could not format the AI result right now. A pharmacist has received your message. Please wait a moment."
+  },
+  "my": {
+    "language_picker_alt": "ဘာသာစကား ရွေးချယ်ရန်",
+    "language_picker_title": "ဘာသာစကား ရွေးချယ်ပါ",
+    "language_picker_subtitle": "ဆေးဝါးအကူအညီပေးသူနှင့် အသုံးပြုလိုသော ဘာသာစကားကို ရွေးချယ်ပါ။",
+    "language_saved": "ဘာသာစကားကို သိမ်းဆည်းပြီးပါပြီ။ ယခုမှစ၍ မြန်မာဘာသာဖြင့် ပြန်ကြားပါမည်။",
+    "change_language_command": "Change Language",
+    "unsupported_message_type": "တောင်းပန်ပါတယ် 🙏 လက်ရှိတွင် စာသားနှင့် ဓာတ်ပုံ မက်ဆေ့ချ်များကိုသာ ပံ့ပိုးနိုင်ပါသည်။\n\nဆေးနှင့်ပတ်သက်သော မေးခွန်းကို ရိုက်ထည့်နိုင်သလို ဆေးတံဆိပ်ဓာတ်ပုံကိုလည်း ပို့နိုင်ပါသည်။ 💊",
+    "generic_processing_error": "တောင်းပန်ပါတယ်။ စနစ်သည် ယာယီအခက်အခဲဖြစ်နေပါသည်။ ကျေးဇူးပြု၍ ဆိုင်ရှိ ဆေးဝါးကျွမ်းကျင်သူကို ဆက်သွယ်ပါ။",
+    "supabase_not_connected": "Supabase not connected",
+    "ocr_rotated_image": "📸 ဓာတ်ပုံသည် ဘေးတိုက် သို့မဟုတ် ပြောင်းပြန်ဖြစ်နေပုံရပါသည်။ ဆေးတံဆိပ်ကို တည့်တည့်ရိုက်ပြီး ထပ်မံပို့ပါ။",
+    "ocr_unclear_drug_name": "⚠️ ဆေးအမည်ကို ရှင်းလင်းစွာ မဖတ်နိုင်ပါ။ ကျေးဇူးပြု၍ ဓာတ်ပုံအသစ် ထပ်ရိုက်ပို့ပါ။",
+    "ocr_no_database_match": "🔍 ဆေးအမည် '{drug}' ကို ဖတ်နိုင်ခဲ့သော်လည်း ဒေတာဘေ့စ်တွင် မတွေ့ပါ။",
+    "ai_format_error": "တောင်းပန်ပါတယ်။ AI ရလဒ်ကို စနစ်က ယခု ဖော်မတ်ချ၍ မရပါ။ ဆေးဝါးကျွမ်းကျင်သူထံ မက်ဆေ့ချ်ရောက်ရှိပြီးပါပြီ။ ခဏစောင့်ပါ။"
+  },
+  "lo": {
+    "language_picker_alt": "ເລືອກພາສາ",
+    "language_picker_title": "ເລືອກພາສາ",
+    "language_picker_subtitle": "ກະລຸນາເລືອກພາສາທີ່ຕ້ອງການໃຊ້ກັບຜູ້ຊ່ວຍເພສັດຊະກອນ",
+    "language_saved": "ບັນທຶກພາສາສຳເລັດແລ້ວ. ຈາກນີ້ໄປລະບົບຈະຕອບກັບເປັນພາສາລາວ",
+    "change_language_command": "Change Language",
+    "unsupported_message_type": "ຂໍອະໄພ 🙏 ຕອນນີ້ຜູ້ຊ່ວຍເພສັດຊະກອນຮອງຮັບແຕ່ຂໍ້ຄວາມ ແລະ ຮູບພາບເທົ່ານັ້ນ.\n\nທ່ານສາມາດພິມຄຳຖາມເລື່ອງຢາ ຫຼື ສົ່ງຮູບສະຫຼາກຢາໄດ້. 💊",
+    "generic_processing_error": "ຂໍອະໄພ ລະບົບກຳລັງຂັດຂ້ອງຊົ່ວຄາວ. ກະລຸນາຕິດຕໍ່ເພສັດຊະກອນທີ່ຮ້ານ.",
+    "supabase_not_connected": "Supabase not connected",
+    "ocr_rotated_image": "📸 ຮູບພາບອາດຈະຕະແຄງ ຫຼື ກັບຫົວ. ກະລຸນາຖ່າຍສະຫຼາກຢາໃຫ້ຕັ້ງຕົງແລ້ວສົ່ງໃໝ່.",
+    "ocr_unclear_drug_name": "⚠️ ລະບົບອ່ານຊື່ຢາບໍ່ຊັດເຈນ. ກະລຸນາຖ່າຍໃໝ່ອີກຄັ້ງ.",
+    "ocr_no_database_match": "🔍 ລະບົບອ່ານຊື່ຢາໄດ້ວ່າ '{drug}' ແຕ່ບໍ່ພົບໃນຖານຂໍ້ມູນ.",
+    "ai_format_error": "ຂໍອະໄພ ລະບົບຈັດຮູບແບບຜົນ AI ຂັດຂ້ອງຊົ່ວຄາວ. ເພສັດຊະກອນໄດ້ຮັບຂໍ້ຄວາມແລ້ວ ກະລຸນາລໍຖ້າສັກຄູ່."
+  },
+  "zh": {
+    "language_picker_alt": "选择语言",
+    "language_picker_title": "选择语言",
+    "language_picker_subtitle": "请选择您希望药师助手使用的语言。",
+    "language_saved": "语言已保存。从现在开始，我会用简体中文回复。",
+    "change_language_command": "Change Language",
+    "unsupported_message_type": "抱歉 🙏 目前药师助手仅支持文字和图片消息。\n\n您可以输入用药问题，或发送药品标签照片让我协助查看。💊",
+    "generic_processing_error": "抱歉，消息筛查系统暂时不可用。请联系店内药师。",
+    "supabase_not_connected": "Supabase not connected",
+    "ocr_rotated_image": "📸 图片似乎 sideways 或倒置。请将药品标签拍正后重新发送。",
+    "ocr_unclear_drug_name": "⚠️ 我无法清楚读取药品名称。请重新拍摄一张照片。",
+    "ocr_no_database_match": "🔍 我识别到药品名称为“{drug}”，但数据库中未找到该资料。",
+    "ai_format_error": "抱歉，系统暂时无法整理 AI 结果。药师已收到您的消息，请稍候。"
+  }
+}

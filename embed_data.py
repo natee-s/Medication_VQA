@@ -1,24 +1,23 @@
 import os
-from supabase import create_client, Client
-from google import genai
+
 from dotenv import load_dotenv
+from google import genai
 from google.genai import types
 
 load_dotenv()
 
+from services.supabase_service import supabase
+
 # ==========================================
 # 1. ใส่ API Keys ของคุณแมนตรงนี้ครับ
 # ==========================================
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 # ตรวจสอบความปลอดภัยเบื้องต้น
-if not all([SUPABASE_URL, SUPABASE_KEY, GEMINI_API_KEY]):
+if not all([supabase, GEMINI_API_KEY]):
     raise ValueError("⚠️ หา API Key ไม่พบ! กรุณาตรวจสอบไฟล์ .env")
 
 # เชื่อมต่อระบบ
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 ai_client = genai.Client(api_key=GEMINI_API_KEY)
 
 def generate_embeddings():
