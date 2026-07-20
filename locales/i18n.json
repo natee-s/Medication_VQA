@@ -11,7 +11,13 @@
     "ocr_rotated_image": "📸 รูปภาพตะแคงหรือกลับหัวครับ กรุณาถ่ายฉลากยาให้ตั้งตรงแล้วส่งมาใหม่อีกครั้งนะครับ",
     "ocr_unclear_drug_name": "⚠️ ระบบอ่านชื่อยาบนฉลากไม่ชัดเจน กรุณาถ่ายใหม่อีกครั้งครับ",
     "ocr_no_database_match": "🔍 ระบบสกัดชื่อยาได้ว่า '{drug}' แต่ไม่พบข้อมูลนี้ในฐานข้อมูลครับ",
-    "ai_format_error": "ขออภัยครับ ระบบจัดรูปแบบข้อมูลขัดข้องเบื้องต้น แต่เภสัชกรได้รับข้อความแล้ว รบกวนรอสักครู่นะครับ 👨‍⚕️"
+    "ai_format_error": "ขออภัยครับ ระบบจัดรูปแบบข้อมูลขัดข้องเบื้องต้น แต่เภสัชกรได้รับข้อความแล้ว รบกวนรอสักครู่นะครับ 👨‍⚕️",
+    "rag_header_title": "บ้านยาสุขใจ แนะนำ",
+    "rag_symptom_label": "อาการ",
+    "rag_recommended_drug_label": "ยาที่แนะนำเบื้องต้น",
+    "rag_warning_label": "ข้อควรระวัง",
+    "contact_pharmacist_button": "ติดต่อเภสัชกร",
+    "rag_alt_text": "คำแนะนำสุขภาพจากบ้านยาสุขใจ"
   },
   "en": {
     "language_picker_alt": "Choose language",
@@ -25,7 +31,13 @@
     "ocr_rotated_image": "📸 The image appears sideways or upside down. Please take the medicine label upright and send it again.",
     "ocr_unclear_drug_name": "⚠️ I could not read the medicine name clearly. Please take another photo.",
     "ocr_no_database_match": "🔍 I detected the medicine name '{drug}', but could not find it in the database.",
-    "ai_format_error": "Sorry, the system could not format the AI result right now. A pharmacist has received your message. Please wait a moment."
+    "ai_format_error": "Sorry, the system could not format the AI result right now. A pharmacist has received your message. Please wait a moment.",
+    "rag_header_title": "Banya Sookjai Recommendation",
+    "rag_symptom_label": "Symptom",
+    "rag_recommended_drug_label": "Recommended medicines",
+    "rag_warning_label": "Warnings",
+    "contact_pharmacist_button": "Contact pharmacist",
+    "rag_alt_text": "Health advice from Banya Sookjai"
   },
   "my": {
     "language_picker_alt": "ဘာသာစကား ရွေးချယ်ရန်",
@@ -39,7 +51,13 @@
     "ocr_rotated_image": "📸 ဓာတ်ပုံသည် ဘေးတိုက် သို့မဟုတ် ပြောင်းပြန်ဖြစ်နေပုံရပါသည်။ ဆေးတံဆိပ်ကို တည့်တည့်ရိုက်ပြီး ထပ်မံပို့ပါ။",
     "ocr_unclear_drug_name": "⚠️ ဆေးအမည်ကို ရှင်းလင်းစွာ မဖတ်နိုင်ပါ။ ကျေးဇူးပြု၍ ဓာတ်ပုံအသစ် ထပ်ရိုက်ပို့ပါ။",
     "ocr_no_database_match": "🔍 ဆေးအမည် '{drug}' ကို ဖတ်နိုင်ခဲ့သော်လည်း ဒေတာဘေ့စ်တွင် မတွေ့ပါ။",
-    "ai_format_error": "တောင်းပန်ပါတယ်။ AI ရလဒ်ကို စနစ်က ယခု ဖော်မတ်ချ၍ မရပါ။ ဆေးဝါးကျွမ်းကျင်သူထံ မက်ဆေ့ချ်ရောက်ရှိပြီးပါပြီ။ ခဏစောင့်ပါ။"
+    "ai_format_error": "တောင်းပန်ပါတယ်။ AI ရလဒ်ကို စနစ်က ယခု ဖော်မတ်ချ၍ မရပါ။ ဆေးဝါးကျွမ်းကျင်သူထံ မက်ဆေ့ချ်ရောက်ရှိပြီးပါပြီ။ ခဏစောင့်ပါ။",
+    "rag_header_title": "Banya Sookjai အကြံပြုချက်",
+    "rag_symptom_label": "လက္ခဏာ",
+    "rag_recommended_drug_label": "အကြံပြုဆေးများ",
+    "rag_warning_label": "သတိပြုရန်",
+    "contact_pharmacist_button": "ဆေးဝါးကျွမ်းကျင်သူကို ဆက်သွယ်ရန်",
+    "rag_alt_text": "Banya Sookjai မှ ကျန်းမာရေးအကြံပြုချက်"
   },
   "lo": {
     "language_picker_alt": "ເລືອກພາສາ",
@@ -53,7 +71,13 @@
     "ocr_rotated_image": "📸 ຮູບພາບອາດຈະຕະແຄງ ຫຼື ກັບຫົວ. ກະລຸນາຖ່າຍສະຫຼາກຢາໃຫ້ຕັ້ງຕົງແລ້ວສົ່ງໃໝ່.",
     "ocr_unclear_drug_name": "⚠️ ລະບົບອ່ານຊື່ຢາບໍ່ຊັດເຈນ. ກະລຸນາຖ່າຍໃໝ່ອີກຄັ້ງ.",
     "ocr_no_database_match": "🔍 ລະບົບອ່ານຊື່ຢາໄດ້ວ່າ '{drug}' ແຕ່ບໍ່ພົບໃນຖານຂໍ້ມູນ.",
-    "ai_format_error": "ຂໍອະໄພ ລະບົບຈັດຮູບແບບຜົນ AI ຂັດຂ້ອງຊົ່ວຄາວ. ເພສັດຊະກອນໄດ້ຮັບຂໍ້ຄວາມແລ້ວ ກະລຸນາລໍຖ້າສັກຄູ່."
+    "ai_format_error": "ຂໍອະໄພ ລະບົບຈັດຮູບແບບຜົນ AI ຂັດຂ້ອງຊົ່ວຄາວ. ເພສັດຊະກອນໄດ້ຮັບຂໍ້ຄວາມແລ້ວ ກະລຸນາລໍຖ້າສັກຄູ່.",
+    "rag_header_title": "ຄຳແນະນຳຈາກ Banya Sookjai",
+    "rag_symptom_label": "ອາການ",
+    "rag_recommended_drug_label": "ຢາທີ່ແນະນຳ",
+    "rag_warning_label": "ຂໍ້ຄວນລະວັງ",
+    "contact_pharmacist_button": "ຕິດຕໍ່ເພສັດຊະກອນ",
+    "rag_alt_text": "ຄຳແນະນຳສຸຂະພາບຈາກ Banya Sookjai"
   },
   "zh": {
     "language_picker_alt": "选择语言",
@@ -67,6 +91,12 @@
     "ocr_rotated_image": "📸 图片似乎 sideways 或倒置。请将药品标签拍正后重新发送。",
     "ocr_unclear_drug_name": "⚠️ 我无法清楚读取药品名称。请重新拍摄一张照片。",
     "ocr_no_database_match": "🔍 我识别到药品名称为“{drug}”，但数据库中未找到该资料。",
-    "ai_format_error": "抱歉，系统暂时无法整理 AI 结果。药师已收到您的消息，请稍候。"
+    "ai_format_error": "抱歉，系统暂时无法整理 AI 结果。药师已收到您的消息，请稍候。",
+    "rag_header_title": "Banya Sookjai 建议",
+    "rag_symptom_label": "症状",
+    "rag_recommended_drug_label": "推荐药品",
+    "rag_warning_label": "注意事项",
+    "contact_pharmacist_button": "联系药师",
+    "rag_alt_text": "Banya Sookjai 健康建议"
   }
 }

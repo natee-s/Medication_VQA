@@ -239,6 +239,141 @@ def build_language_instruction(lang: str) -> str:
     return f"You must answer the user only in: {get_ai_language_name(lang)}."
 
 
+def build_database_search_query(client, user_text: str, lang: str) -> str:
+    original_text = (user_text or "").strip()
+    if not original_text or normalize_language(lang) == DEFAULT_LANGUAGE:
+        return original_text
+
+    prompt = f"""
+Convert the user's health or medicine question into one concise Thai search query
+for searching a Thai pharmacy database.
+
+Rules:
+- Return only the Thai search query.
+- Keep it short: 1 to 5 Thai words.
+- Focus on symptoms, medicine names, or indications.
+- Do not include explanations, quotes, markdown, or punctuation.
+
+User language: {get_ai_language_name(lang)}
+User message: {original_text}
+Thai search query:
+""".strip()
+
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[prompt],
+        )
+        search_query = (getattr(response, "text", "") or "").strip().strip('"').strip("'")
+        return search_query or original_text
+    except Exception as e:
+        print(f"⚠️ [Search Query Translation] fallback to original text: {e}")
+        return original_text
+
+
+def build_rag_flex_reply(lang: str, ai_data: dict) -> dict:
+    body_contents = [
+        {
+            "type": "text",
+            "text": f"🩺 {t(lang, 'rag_symptom_label')}: {ai_data.get('symptom', '')}",
+            "weight": "bold",
+            "color": "#1DB446",
+            "wrap": True,
+        },
+        {
+            "type": "text",
+            "text": ai_data.get("advice", ""),
+            "wrap": True,
+            "size": "sm",
+            "margin": "md",
+            "color": "#333333",
+        },
+    ]
+
+    if ai_data.get("recommended_drug"):
+        body_contents.append({"type": "separator", "margin": "lg"})
+        body_contents.append(
+            {
+                "type": "text",
+                "text": f"💊 {t(lang, 'rag_recommended_drug_label')}",
+                "weight": "bold",
+                "size": "sm",
+                "color": "#009688",
+                "margin": "md",
+            }
+        )
+        body_contents.append(
+            {
+                "type": "text",
+                "text": ai_data.get("recommended_drug"),
+                "wrap": True,
+                "size": "sm",
+                "color": "#666666",
+            }
+        )
+
+    if ai_data.get("warning"):
+        body_contents.append({"type": "separator", "margin": "lg"})
+        body_contents.append(
+            {
+                "type": "text",
+                "text": f"⚠️ {t(lang, 'rag_warning_label')}",
+                "weight": "bold",
+                "size": "sm",
+                "color": "#F44336",
+                "margin": "md",
+            }
+        )
+        body_contents.append(
+            {
+                "type": "text",
+                "text": ai_data.get("warning"),
+                "wrap": True,
+                "size": "sm",
+                "color": "#666666",
+            }
+        )
+
+    contact_pharmacist_text = t(lang, "contact_pharmacist_button")
+    return {
+        "type": "bubble",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#1DB446",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": f"👩‍⚕️ {t(lang, 'rag_header_title')}",
+                    "color": "#FFFFFF",
+                    "weight": "bold",
+                }
+            ],
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "sm",
+            "contents": body_contents,
+        },
+        "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "button",
+                    "style": "primary",
+                    "action": {
+                        "type": "message",
+                        "label": contact_pharmacist_text,
+                        "text": contact_pharmacist_text,
+                    },
+                }
+            ],
+        },
+    }
+
+
 def build_language_picker(lang: str = DEFAULT_LANGUAGE) -> dict:
     return {
         "type": "bubble",
@@ -1040,10 +1175,13 @@ def handle_text_message(event):
             print(f"🔍 [Vector Search] กำลังวิเคราะห์อาการ: {user_text}")
             
             try:
+                database_search_query = build_database_search_query(client, user_text, user_language)
+                print(f"🔎 [Vector Search] คำค้นสำหรับฐานข้อมูล: {database_search_query}")
+
                 # 3.1 แปลงประโยคของลูกค้าให้เป็น Vector (อัปเดตโมเดลเป็น gemini-embedding-001)
                 embed_res = client.models.embed_content(
                     model='gemini-embedding-001',
-                    contents=user_text,
+                    contents=database_search_query,
                     config=types.EmbedContentConfig(output_dimensionality=768) # 👈 บังคับให้เหลือ 768 มิติ
                 )
                 query_vector = embed_res.embeddings[0].values
@@ -1053,7 +1191,7 @@ def handle_text_message(event):
                     "match_symptoms", 
                     {
                         "query_embedding": query_vector,
-                        "match_threshold": 0.6, # ปรับจูนได้: ค่ายิ่งใกล้ 1 ยิ่งต้องเหมือนเป๊ะ (แนะนำ 0.3 - 0.5)
+                        "match_threshold": 0.4, # ปรับจูนได้: ค่ายิ่งใกล้ 1 ยิ่งต้องเหมือนเป๊ะ (แนะนำ 0.3 - 0.5)
                         "match_count": 3        # ดึงยาที่ตรงกับอาการมากที่สุดมา 3 อันดับแรก
                     }
                 ).execute()
@@ -1091,6 +1229,8 @@ def handle_text_message(event):
             จากข้อมูลร้านยาต่อไปนี้: {context_text}
             จงตอบคำถามของลูกค้า: {user_text}
             {language_instruction}
+            ข้อมูลจากฐานข้อมูลอาจเป็นภาษาไทย ให้แปลและสรุปเป็นภาษาของผู้ใช้ตามคำสั่งด้านบน
+            ห้ามแปลชื่อยา trade name หรือ generic name แบบเดาสุ่ม
 
             กรุณาตอบกลับในรูปแบบ JSON เท่านั้น โดยใช้โครงสร้างดังนี้:
             {{
@@ -1113,61 +1253,11 @@ def handle_text_message(event):
                 # เพิ่มระบบเคลียร์ Markdown เผื่อ AI แถมมา
                 clean_json_text = final_res.text.strip().replace("```json", "").replace("```", "").strip()
                 ai_data = json.loads(clean_json_text)
-                
-                body_contents = []
-                
-                body_contents.append({
-                    "type": "text", "text": f"🩺 อาการ: {ai_data.get('symptom', 'ไม่ระบุ')}", 
-                    "weight": "bold", "color": "#1DB446", "wrap": True
-                })
-                body_contents.append({
-                    "type": "text", "text": ai_data.get('advice', ''), 
-                    "wrap": True, "size": "sm", "margin": "md", "color": "#333333"
-                })
-                
-                if ai_data.get('recommended_drug'):
-                    body_contents.append({"type": "separator", "margin": "lg"})
-                    body_contents.append({
-                        "type": "text", "text": "💊 ยาที่แนะนำเบื้องต้น", 
-                        "weight": "bold", "size": "sm", "color": "#009688", "margin": "md"
-                    })
-                    body_contents.append({
-                        "type": "text", "text": ai_data.get('recommended_drug'), 
-                        "wrap": True, "size": "sm", "color": "#666666"
-                    })
-
-                if ai_data.get('warning'):
-                    body_contents.append({"type": "separator", "margin": "lg"})
-                    body_contents.append({
-                        "type": "text", "text": "⚠️ ข้อควรระวัง", 
-                        "weight": "bold", "size": "sm", "color": "#F44336", "margin": "md"
-                    })
-                    body_contents.append({
-                        "type": "text", "text": ai_data.get('warning'), 
-                        "wrap": True, "size": "sm", "color": "#666666"
-                    })
-
-                flex_rag_reply = {
-                    "type": "bubble",
-                    "header": {
-                        "type": "box", "layout": "vertical", "backgroundColor": "#1DB446",
-                        "contents": [{"type": "text", "text": "👩‍⚕️ บ้านยาสุขใจ แนะนำ", "color": "#FFFFFF", "weight": "bold"}]
-                    },
-                    "body": {
-                        "type": "box", "layout": "vertical", "spacing": "sm",
-                        "contents": body_contents
-                    },
-                    "footer": {
-                        "type": "box", "layout": "vertical",
-                        "contents": [
-                            {"type": "button", "style": "primary", "action": {"type": "message", "label": "ติดต่อเภสัชกร", "text": "ติดต่อเภสัชกร"}}
-                        ]
-                    }
-                }
+                flex_rag_reply = build_rag_flex_reply(user_language, ai_data)
                 
                 line_bot_api.reply_message(
                     event.reply_token, 
-                    FlexSendMessage(alt_text="คำแนะนำสุขภาพจากบ้านยาสุขใจ", contents=flex_rag_reply)
+                    FlexSendMessage(alt_text=t(user_language, "rag_alt_text"), contents=flex_rag_reply)
                 )
 
             except Exception as e:

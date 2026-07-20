@@ -76,6 +76,26 @@ class FakeSupabase:
         return self.user_profiles.query()
 
 
+class FakeTextResponse:
+    def __init__(self, text):
+        self.text = text
+
+
+class FakeGeminiModels:
+    def __init__(self, response_text):
+        self.response_text = response_text
+        self.generate_content_calls = []
+
+    def generate_content(self, **kwargs):
+        self.generate_content_calls.append(kwargs)
+        return FakeTextResponse(self.response_text)
+
+
+class FakeGeminiClient:
+    def __init__(self, response_text):
+        self.models = FakeGeminiModels(response_text)
+
+
 class LanguageServiceTests(unittest.TestCase):
     def setUp(self):
         import services.supabase_service as service
@@ -178,6 +198,58 @@ class MainPromptLanguageTests(unittest.TestCase):
 
         self.assertIn("English", main.build_language_instruction("en"))
         self.assertIn("Simplified Chinese", main.build_language_instruction("zh"))
+
+
+class MainDatabaseSearchQueryTests(unittest.TestCase):
+    def test_database_search_query_translates_non_thai_input_to_thai(self):
+        import main
+
+        fake_client = FakeGeminiClient("ปวดหัว")
+
+        query = main.build_database_search_query(fake_client, "headache", "en")
+
+        self.assertEqual(query, "ปวดหัว")
+        self.assertEqual(len(fake_client.models.generate_content_calls), 1)
+        prompt = fake_client.models.generate_content_calls[0]["contents"][0]
+        self.assertIn("Thai search query", prompt)
+        self.assertIn("headache", prompt)
+
+    def test_database_search_query_uses_original_thai_input_without_ai_call(self):
+        import main
+
+        fake_client = FakeGeminiClient("ignored")
+
+        query = main.build_database_search_query(fake_client, "ปวดหัว", "th")
+
+        self.assertEqual(query, "ปวดหัว")
+        self.assertEqual(fake_client.models.generate_content_calls, [])
+
+
+class MainRagFlexLocalizationTests(unittest.TestCase):
+    def test_rag_flex_uses_selected_language_for_static_labels(self):
+        import main
+
+        flex = main.build_rag_flex_reply(
+            "en",
+            {
+                "symptom": "Headache",
+                "advice": "Rest and drink enough water.",
+                "recommended_drug": "",
+                "warning": "",
+            },
+        )
+
+        header_text = flex["header"]["contents"][0]["text"]
+        first_body_text = flex["body"]["contents"][0]["text"]
+        button = flex["footer"]["contents"][0]["action"]
+
+        self.assertEqual(header_text, "👩‍⚕️ Banya Sookjai Recommendation")
+        self.assertEqual(first_body_text, "🩺 Symptom: Headache")
+        self.assertEqual(button["label"], "Contact pharmacist")
+        self.assertEqual(button["text"], "Contact pharmacist")
+        self.assertNotIn("บ้านยาสุขใจ", header_text)
+        self.assertNotIn("อาการ", first_body_text)
+        self.assertNotIn("ติดต่อเภสัชกร", button["label"])
 
 
 if __name__ == "__main__":
