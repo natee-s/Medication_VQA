@@ -17,7 +17,19 @@
     "rag_recommended_drug_label": "ยาที่แนะนำเบื้องต้น",
     "rag_warning_label": "ข้อควรระวัง",
     "contact_pharmacist_button": "ติดต่อเภสัชกร",
-    "rag_alt_text": "คำแนะนำสุขภาพจากบ้านยาสุขใจ"
+    "rag_alt_text": "คำแนะนำสุขภาพจากบ้านยาสุขใจ",
+    "medicine_label_alt": "ข้อมูลยา: {drug}",
+    "medicine_label_title": "ข้อมูลฉลากยา",
+    "medicine_trade_name_label": "ชื่อการค้า",
+    "medicine_generic_name_label": "ชื่อยา",
+    "medicine_indication_label": "ข้อบ่งใช้",
+    "medicine_dosage_label": "ขนาดยา",
+    "medicine_instruction_label": "วิธีใช้",
+    "medicine_warning_label": "คำเตือน",
+    "set_reminder_button": "ตั้งเตือนกินยา",
+    "acknowledge_button": "รับทราบ",
+    "not_specified": "ไม่ระบุ",
+    "no_warning": "ไม่มี"
   },
   "en": {
     "language_picker_alt": "Choose language",
@@ -37,7 +49,19 @@
     "rag_recommended_drug_label": "Recommended medicines",
     "rag_warning_label": "Warnings",
     "contact_pharmacist_button": "Contact pharmacist",
-    "rag_alt_text": "Health advice from Banya Sookjai"
+    "rag_alt_text": "Health advice from Banya Sookjai",
+    "medicine_label_alt": "Medicine information: {drug}",
+    "medicine_label_title": "Medicine Label Information",
+    "medicine_trade_name_label": "Trade name",
+    "medicine_generic_name_label": "Medicine name",
+    "medicine_indication_label": "Indication",
+    "medicine_dosage_label": "Dosage",
+    "medicine_instruction_label": "Directions",
+    "medicine_warning_label": "Warning",
+    "set_reminder_button": "Set medication reminder",
+    "acknowledge_button": "Got it",
+    "not_specified": "Not specified",
+    "no_warning": "None"
   },
   "my": {
     "language_picker_alt": "ဘာသာစကား ရွေးချယ်ရန်",
@@ -57,7 +81,19 @@
     "rag_recommended_drug_label": "အကြံပြုဆေးများ",
     "rag_warning_label": "သတိပြုရန်",
     "contact_pharmacist_button": "ဆေးဝါးကျွမ်းကျင်သူကို ဆက်သွယ်ရန်",
-    "rag_alt_text": "Banya Sookjai မှ ကျန်းမာရေးအကြံပြုချက်"
+    "rag_alt_text": "Banya Sookjai မှ ကျန်းမာရေးအကြံပြုချက်",
+    "medicine_label_alt": "ဆေးအချက်အလက်: {drug}",
+    "medicine_label_title": "ဆေးတံဆိပ် အချက်အလက်",
+    "medicine_trade_name_label": "ကုန်သွယ်အမည်",
+    "medicine_generic_name_label": "ဆေးအမည်",
+    "medicine_indication_label": "အသုံးပြုရန်",
+    "medicine_dosage_label": "ဆေးပမာဏ",
+    "medicine_instruction_label": "အသုံးပြုပုံ",
+    "medicine_warning_label": "သတိပေးချက်",
+    "set_reminder_button": "ဆေးသောက်ရန် သတိပေးချက် သတ်မှတ်မည်",
+    "acknowledge_button": "သိပါပြီ",
+    "not_specified": "မဖော်ပြထားပါ",
+    "no_warning": "မရှိပါ"
   },
   "lo": {
     "language_picker_alt": "ເລືອກພາສາ",
@@ -77,7 +113,19 @@
     "rag_recommended_drug_label": "ຢາທີ່ແນະນຳ",
     "rag_warning_label": "ຂໍ້ຄວນລະວັງ",
     "contact_pharmacist_button": "ຕິດຕໍ່ເພສັດຊະກອນ",
-    "rag_alt_text": "ຄຳແນະນຳສຸຂະພາບຈາກ Banya Sookjai"
+    "rag_alt_text": "ຄຳແນະນຳສຸຂະພາບຈາກ Banya Sookjai",
+    "medicine_label_alt": "ຂໍ້ມູນຢາ: {drug}",
+    "medicine_label_title": "ຂໍ້ມູນສະຫຼາກຢາ",
+    "medicine_trade_name_label": "ຊື່ການຄ້າ",
+    "medicine_generic_name_label": "ຊື່ຢາ",
+    "medicine_indication_label": "ຂໍ້ບົ່ງໃຊ້",
+    "medicine_dosage_label": "ຂະໜາດຢາ",
+    "medicine_instruction_label": "ວິທີໃຊ້",
+    "medicine_warning_label": "ຄຳເຕືອນ",
+    "set_reminder_button": "ຕັ້ງເຕືອນກິນຢາ",
+    "acknowledge_button": "ຮັບຊາບ",
+    "not_specified": "ບໍ່ລະບຸ",
+    "no_warning": "ບໍ່ມີ"
   },
   "zh": {
     "language_picker_alt": "选择语言",
@@ -97,6 +145,18 @@
     "rag_recommended_drug_label": "推荐药品",
     "rag_warning_label": "注意事项",
     "contact_pharmacist_button": "联系药师",
-    "rag_alt_text": "Banya Sookjai 健康建议"
+    "rag_alt_text": "Banya Sookjai 健康建议",
+    "medicine_label_alt": "药品信息：{drug}",
+    "medicine_label_title": "药品标签信息",
+    "medicine_trade_name_label": "商品名",
+    "medicine_generic_name_label": "药品名称",
+    "medicine_indication_label": "适应症",
+    "medicine_dosage_label": "剂量",
+    "medicine_instruction_label": "用法",
+    "medicine_warning_label": "警告",
+    "set_reminder_button": "设置用药提醒",
+    "acknowledge_button": "知道了",
+    "not_specified": "未注明",
+    "no_warning": "无"
   }
 }

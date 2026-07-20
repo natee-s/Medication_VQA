@@ -304,6 +304,70 @@ class MainRagFlexLocalizationTests(unittest.TestCase):
         self.assertNotIn("", collect_text_values(flex))
 
 
+class MainMedicineLabelFlexLocalizationTests(unittest.TestCase):
+    def test_medicine_label_flex_uses_selected_language_for_static_labels(self):
+        import main
+
+        flex = main.build_medicine_label_flex_reply(
+            "zh",
+            {
+                "trade_name": "Tylenol",
+                "generic_name": "Paracetamol",
+                "indication": "用于缓解疼痛和退烧",
+                "dosage": "每次1片",
+                "instruction": "饭后服用",
+                "warning": "请勿超过推荐剂量",
+            },
+            time_payload="morning",
+            meal_timing="after",
+        )
+
+        header_text = flex["header"]["contents"][0]["text"]
+        body_texts = [
+            item["text"]
+            for item in flex["body"]["contents"]
+            if item.get("type") == "text"
+        ]
+        button_labels = [
+            item["action"]["label"]
+            for item in flex["footer"]["contents"]
+            if item.get("type") == "button"
+        ]
+
+        self.assertEqual(header_text, "💊 药品标签信息")
+        self.assertIn("商品名: Tylenol", body_texts)
+        self.assertIn("药品名称: Paracetamol", body_texts)
+        self.assertIn("🎯 适应症: 用于缓解疼痛和退烧", body_texts)
+        self.assertIn("⏱️ 用法: 饭后服用", body_texts)
+        self.assertEqual(button_labels, ["⏰ 设置用药提醒", "✅ 知道了"])
+        self.assertNotIn("ข้อมูลฉลากยา", header_text)
+        self.assertFalse(any("วิธีใช้" in text for text in body_texts))
+
+    def test_translate_medicine_label_fields_translates_display_text_for_non_thai_users(self):
+        import main
+
+        fake_client = FakeGeminiClient(
+            '{"indication":"用于缓解疼痛","dosage":"每次1片","instruction":"饭后服用","warning":"请勿超过推荐剂量"}'
+        )
+        db_data = {
+            "trade_name": "Tylenol",
+            "generic_name": "Paracetamol",
+            "indication": "บรรเทาอาการปวด",
+            "dosage_frequency": "ครั้งละ 1 เม็ด",
+            "instruction_time": "หลังอาหาร",
+            "precaution": "ห้ามใช้เกินขนาด",
+        }
+
+        display = main.build_medicine_label_display_data(fake_client, db_data, "zh")
+
+        self.assertEqual(display["trade_name"], "Tylenol")
+        self.assertEqual(display["generic_name"], "Paracetamol")
+        self.assertEqual(display["indication"], "用于缓解疼痛")
+        self.assertEqual(display["dosage"], "每次1片")
+        self.assertEqual(display["instruction"], "饭后服用")
+        self.assertEqual(display["warning"], "请勿超过推荐剂量")
+
+
 class MainLineReplyFallbackTests(unittest.TestCase):
     def test_reply_or_push_uses_reply_token_when_it_is_valid(self):
         import main

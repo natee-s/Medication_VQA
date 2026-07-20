@@ -396,6 +396,152 @@ def build_rag_flex_reply(lang: str, ai_data: dict) -> dict:
     }
 
 
+def build_medicine_label_display_data(client, db_data: dict, lang: str) -> dict:
+    display_data = {
+        "trade_name": db_data.get("trade_name") or t(lang, "not_specified"),
+        "generic_name": db_data.get("generic_name") or t(lang, "not_specified"),
+        "indication": db_data.get("indication") or t(lang, "not_specified"),
+        "dosage": db_data.get("dosage_frequency") or t(lang, "not_specified"),
+        "instruction": db_data.get("instruction_time") or t(lang, "not_specified"),
+        "warning": db_data.get("precaution") or t(lang, "no_warning"),
+    }
+
+    if normalize_language(lang) == DEFAULT_LANGUAGE:
+        return display_data
+
+    prompt = f"""
+Translate the following medicine label display fields into {get_ai_language_name(lang)}.
+
+Rules:
+- Return JSON only.
+- Keep trade_name and generic_name unchanged.
+- Translate indication, dosage, instruction, and warning.
+- Do not add medical advice beyond the source text.
+
+Source JSON:
+{json.dumps(display_data, ensure_ascii=False)}
+
+Required JSON keys:
+{{
+  "indication": "...",
+  "dosage": "...",
+  "instruction": "...",
+  "warning": "..."
+}}
+""".strip()
+
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[prompt],
+            config={"response_mime_type": "application/json"},
+        )
+        translated_text = response.text.strip().replace("```json", "").replace("```", "").strip()
+        translated_data = json.loads(translated_text)
+        for key in ("indication", "dosage", "instruction", "warning"):
+            translated_value = str(translated_data.get(key) or "").strip()
+            if translated_value:
+                display_data[key] = translated_value
+    except Exception as e:
+        print(f"⚠️ [Medicine Label Translation] fallback to source language: {e}")
+
+    return display_data
+
+
+def build_medicine_label_flex_reply(lang: str, display_data: dict, time_payload: str, meal_timing: str) -> dict:
+    generic_name = display_data.get("generic_name") or t(lang, "not_specified")
+    return {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#1DB446",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": f"💊 {t(lang, 'medicine_label_title')}",
+                    "weight": "bold",
+                    "size": "lg",
+                    "color": "#FFFFFF",
+                }
+            ],
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "md",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": f"{t(lang, 'medicine_trade_name_label')}: {display_data.get('trade_name') or t(lang, 'not_specified')}",
+                    "weight": "bold",
+                    "wrap": True,
+                },
+                {
+                    "type": "text",
+                    "text": f"{t(lang, 'medicine_generic_name_label')}: {generic_name}",
+                    "color": "#666666",
+                    "size": "sm",
+                    "wrap": True,
+                },
+                {"type": "separator", "margin": "md"},
+                {
+                    "type": "text",
+                    "text": f"🎯 {t(lang, 'medicine_indication_label')}: {display_data.get('indication') or t(lang, 'not_specified')}",
+                    "wrap": True,
+                },
+                {
+                    "type": "text",
+                    "text": f"⚖️ {t(lang, 'medicine_dosage_label')}: {display_data.get('dosage') or t(lang, 'not_specified')}",
+                    "wrap": True,
+                },
+                {
+                    "type": "text",
+                    "text": f"⏱️ {t(lang, 'medicine_instruction_label')}: {display_data.get('instruction') or t(lang, 'not_specified')}",
+                    "weight": "bold",
+                    "color": "#E03131",
+                    "wrap": True,
+                },
+                {
+                    "type": "text",
+                    "text": f"⚠️ {t(lang, 'medicine_warning_label')}: {display_data.get('warning') or t(lang, 'no_warning')}",
+                    "size": "sm",
+                    "color": "#FFA500",
+                    "wrap": True,
+                },
+            ],
+        },
+        "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "sm",
+            "contents": [
+                {
+                    "type": "button",
+                    "style": "primary",
+                    "height": "sm",
+                    "action": {
+                        "type": "postback",
+                        "label": f"⏰ {t(lang, 'set_reminder_button')}",
+                        "data": f"action=set_reminder&drug={generic_name}&time={time_payload}&timing={meal_timing}",
+                    },
+                },
+                {
+                    "type": "button",
+                    "style": "secondary",
+                    "height": "sm",
+                    "action": {
+                        "type": "postback",
+                        "label": f"✅ {t(lang, 'acknowledge_button')}",
+                        "data": "action=acknowledge",
+                    },
+                },
+            ],
+        },
+    }
+
+
 def build_language_picker(lang: str = DEFAULT_LANGUAGE) -> dict:
     return {
         "type": "bubble",
@@ -763,84 +909,47 @@ def handle_image(event):
                 return
             
             # จัดเตรียมข้อมูลใส่ Flex Message
-            trade_name = db_data.get('trade_name') or 'ไม่ระบุ'
-            generic_name = db_data.get('generic_name') or 'ไม่ระบุ'
-            indication = db_data.get('indication') or 'ไม่ระบุ'
-            dosage = db_data.get('dosage_frequency') or 'ไม่ระบุ'
-            instruction = db_data.get('instruction_time') or 'ไม่ระบุ'
-            warning = db_data.get('precaution') or 'ไม่มี'
+            display_data = build_medicine_label_display_data(ai_client, db_data, user_language)
+            generic_name = display_data.get("generic_name") or t(user_language, "not_specified")
+            instruction_for_reminder = db_data.get('instruction_time') or ''
 
             # ----------------------------------------------------
             # 🎯 เพิ่มลอจิกวิเคราะห์เวลากินยาจากข้อความ instruction
             # ----------------------------------------------------
             time_list = []
-            if instruction != 'ไม่ระบุ':
-                if 'เช้า' in instruction: time_list.append('morning')
-                if 'กลางวัน' in instruction or 'เที่ยง' in instruction: time_list.append('noon')
-                if 'เย็น' in instruction: time_list.append('evening')
-                if 'นอน' in instruction: time_list.append('bedtime')
+            if instruction_for_reminder:
+                if 'เช้า' in instruction_for_reminder: time_list.append('morning')
+                if 'กลางวัน' in instruction_for_reminder or 'เที่ยง' in instruction_for_reminder: time_list.append('noon')
+                if 'เย็น' in instruction_for_reminder: time_list.append('evening')
+                if 'นอน' in instruction_for_reminder: time_list.append('bedtime')
             
             # รวมเป็น text เช่น "morning,bedtime" ถ้าไม่มีให้ส่ง "none"
             time_payload = ",".join(time_list) if time_list else "none"
 
             # 👇 [เพิ่มใหม่] ลอจิกตรวจสอบ ก่อนอาหาร หรือ หลังอาหาร 👇
             meal_timing = "after" # ตั้งค่าเริ่มต้นให้เป็น 'หลังอาหาร' ไว้ก่อน
-            if 'ก่อนอาหาร' in instruction or 'ก่อน' in instruction:
+            if 'ก่อนอาหาร' in instruction_for_reminder or 'ก่อน' in instruction_for_reminder:
                 meal_timing = "before"
             
-            print(f"🔍 [DEBUG] ข้อความวิธีใช้จาก DB: {instruction}")
+            print(f"🔍 [DEBUG] ข้อความวิธีใช้จาก DB: {instruction_for_reminder}")
             print(f"🔍 [DEBUG] Time Payload: {time_payload} | Timing: {meal_timing}")
             # ----------------------------------------------------
 
-            flex_bubble = {
-                "type": "bubble",
-                "size": "mega",
-                "header": {
-                    "type": "box",
-                    "layout": "vertical",
-                    "backgroundColor": "#1DB446",
-                    "contents": [
-                        {"type": "text", "text": "💊 ข้อมูลฉลากยา", "weight": "bold", "size": "lg", "color": "#FFFFFF"}
-                    ]
-                },
-                "body": {
-                    "type": "box",
-                    "layout": "vertical",
-                    "spacing": "md",
-                    "contents": [
-                        {"type": "text", "text": f"ชื่อการค้า: {trade_name}", "weight": "bold", "wrap": True},
-                        {"type": "text", "text": f"ชื่อยา: {generic_name}", "color": "#666666", "size": "sm", "wrap": True},
-                        {"type": "separator", "margin": "md"},
-                        {"type": "text", "text": f"🎯 ข้อบ่งใช้: {indication}", "wrap": True},
-                        {"type": "text", "text": f"⚖️ ขนาดยา: {dosage}", "wrap": True},
-                        {"type": "text", "text": f"⏱️ วิธีใช้: {instruction}", "weight": "bold", "color": "#E03131", "wrap": True},
-                        {"type": "text", "text": f"⚠️ คำเตือน: {warning}", "size": "sm", "color": "#FFA500", "wrap": True}
-                    ]
-                },
-                "footer": {
-                    "type": "box",
-                    "layout": "vertical",
-                    "spacing": "sm",
-                    "contents": [
-                        {
-                            "type": "button",
-                            "style": "primary",
-                            "height": "sm",
-                            "action": {"type": "postback", "label": "⏰ ตั้งเตือนกินยา", "data": f"action=set_reminder&drug={generic_name}&time={time_payload}&timing={meal_timing}"}
-                        },
-                        {
-                            "type": "button",
-                            "style": "secondary",
-                            "height": "sm",
-                            "action": {"type": "postback", "label": "✅ รับทราบ", "data": "action=acknowledge"}
-                        }
-                    ]
-                }
-            }
+            flex_bubble = build_medicine_label_flex_reply(
+                user_language,
+                display_data,
+                time_payload,
+                meal_timing,
+            )
 
-            line_bot_api.reply_message(
+            reply_or_push_message(
+                line_bot_api,
+                user_id,
                 event.reply_token,
-                FlexSendMessage(alt_text=f"ข้อมูลยา: {generic_name}", contents=flex_bubble)
+                FlexSendMessage(
+                    alt_text=t(user_language, "medicine_label_alt", drug=generic_name),
+                    contents=flex_bubble,
+                ),
             )
 
         except json.JSONDecodeError:
