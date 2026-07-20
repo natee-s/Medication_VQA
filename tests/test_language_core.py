@@ -273,6 +273,36 @@ class MainRagFlexLocalizationTests(unittest.TestCase):
         self.assertNotIn("อาการ", first_body_text)
         self.assertNotIn("ติดต่อเภสัชกร", button["label"])
 
+    def test_rag_flex_does_not_emit_empty_text_components(self):
+        import main
+
+        flex = main.build_rag_flex_reply(
+            "zh",
+            {
+                "symptom": "头痛",
+                "advice": "",
+                "recommended_drug": "",
+                "warning": "",
+            },
+        )
+
+        def collect_text_values(node):
+            if isinstance(node, dict):
+                values = []
+                if "text" in node:
+                    values.append(node["text"])
+                for value in node.values():
+                    values.extend(collect_text_values(value))
+                return values
+            if isinstance(node, list):
+                values = []
+                for item in node:
+                    values.extend(collect_text_values(item))
+                return values
+            return []
+
+        self.assertNotIn("", collect_text_values(flex))
+
 
 class MainLineReplyFallbackTests(unittest.TestCase):
     def test_reply_or_push_uses_reply_token_when_it_is_valid(self):

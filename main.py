@@ -284,25 +284,35 @@ Thai search query:
 
 
 def build_rag_flex_reply(lang: str, ai_data: dict) -> dict:
+    def clean_field(key: str) -> str:
+        return str(ai_data.get(key) or "").strip()
+
+    symptom_text = clean_field("symptom") or "-"
+    advice_text = clean_field("advice")
+    recommended_drug_text = clean_field("recommended_drug")
+    warning_text = clean_field("warning")
+
     body_contents = [
         {
             "type": "text",
-            "text": f"🩺 {t(lang, 'rag_symptom_label')}: {ai_data.get('symptom', '')}",
+            "text": f"🩺 {t(lang, 'rag_symptom_label')}: {symptom_text}",
             "weight": "bold",
             "color": "#1DB446",
             "wrap": True,
         },
-        {
+    ]
+
+    if advice_text:
+        body_contents.append({
             "type": "text",
-            "text": ai_data.get("advice", ""),
+            "text": advice_text,
             "wrap": True,
             "size": "sm",
             "margin": "md",
             "color": "#333333",
-        },
-    ]
+        })
 
-    if ai_data.get("recommended_drug"):
+    if recommended_drug_text:
         body_contents.append({"type": "separator", "margin": "lg"})
         body_contents.append(
             {
@@ -317,14 +327,14 @@ def build_rag_flex_reply(lang: str, ai_data: dict) -> dict:
         body_contents.append(
             {
                 "type": "text",
-                "text": ai_data.get("recommended_drug"),
+                "text": recommended_drug_text,
                 "wrap": True,
                 "size": "sm",
                 "color": "#666666",
             }
         )
 
-    if ai_data.get("warning"):
+    if warning_text:
         body_contents.append({"type": "separator", "margin": "lg"})
         body_contents.append(
             {
@@ -339,7 +349,7 @@ def build_rag_flex_reply(lang: str, ai_data: dict) -> dict:
         body_contents.append(
             {
                 "type": "text",
-                "text": ai_data.get("warning"),
+                "text": warning_text,
                 "wrap": True,
                 "size": "sm",
                 "color": "#666666",
