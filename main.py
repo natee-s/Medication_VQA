@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Request, HTTPException
 from linebot import LineBotApi, WebhookHandler
-from linebot.exceptions import InvalidSignatureError
+from linebot.exceptions import InvalidSignatureError, LineBotApiError
 from linebot.models import (
     MessageEvent,
     TextMessage,
@@ -202,6 +202,18 @@ LANGUAGE_OPTIONS = (
 )
 AI_LANGUAGE_NAMES = {item["code"]: item["ai_name"] for item in LANGUAGE_OPTIONS}
 LANGUAGE_COMMANDS = {"เปลี่ยนภาษา", "Change Language", "เปลี่ยนภาษา / Change Language"}
+
+
+def reply_or_push_message(line_api, user_id: str, reply_token: str, messages):
+    try:
+        line_api.reply_message(reply_token, messages)
+    except LineBotApiError as e:
+        error_message = getattr(getattr(e, "error", None), "message", "")
+        if e.status_code == 400 and "Invalid reply token" in error_message:
+            print(f"⚠️ LINE reply token หมดอายุสำหรับ {user_id}; ส่ง fallback ด้วย push_message")
+            line_api.push_message(user_id, messages)
+            return
+        raise
 
 
 def normalize_command_text(text: str) -> str:
@@ -1255,16 +1267,20 @@ def handle_text_message(event):
                 ai_data = json.loads(clean_json_text)
                 flex_rag_reply = build_rag_flex_reply(user_language, ai_data)
                 
-                line_bot_api.reply_message(
-                    event.reply_token, 
-                    FlexSendMessage(alt_text=t(user_language, "rag_alt_text"), contents=flex_rag_reply)
+                reply_or_push_message(
+                    line_bot_api,
+                    user_id,
+                    event.reply_token,
+                    FlexSendMessage(alt_text=t(user_language, "rag_alt_text"), contents=flex_rag_reply),
                 )
 
             except Exception as e:
                 print(f"❌ Error parsing JSON or building Flex: {e}")
-                line_bot_api.reply_message(
-                    event.reply_token, 
-                    TextSendMessage(text=t(user_language, "ai_format_error"))
+                reply_or_push_message(
+                    line_bot_api,
+                    user_id,
+                    event.reply_token,
+                    TextSendMessage(text=t(user_language, "ai_format_error")),
                 )
 
     # 👇 การย่อหน้าตรงนี้แหละครับที่ถูกต้อง! มันต้องออกมาระดับเดียวกับ try ด้านบนสุด
@@ -1277,7 +1293,12 @@ def handle_text_message(event):
         else:
             reply_text = t(user_language, "generic_processing_error")
             
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+        reply_or_push_message(
+            line_bot_api,
+            user_id,
+            event.reply_token,
+            TextSendMessage(text=reply_text),
+        )
 # ==========================================
 # ⚡ ดักจับข้อความประเภทอื่นๆ (Edge Cases & Error Handling)
 # ==========================================

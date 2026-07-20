@@ -4,6 +4,8 @@ import types
 import unittest
 from pathlib import Path
 
+from linebot.exceptions import LineBotApiError
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -94,6 +96,26 @@ class FakeGeminiModels:
 class FakeGeminiClient:
     def __init__(self, response_text):
         self.models = FakeGeminiModels(response_text)
+
+
+class FakeLineError:
+    def __init__(self, message):
+        self.message = message
+
+
+class FakeLineBotApi:
+    def __init__(self, error=None):
+        self.error = error
+        self.replies = []
+        self.pushes = []
+
+    def reply_message(self, reply_token, messages):
+        self.replies.append((reply_token, messages))
+        if self.error:
+            raise self.error
+
+    def push_message(self, user_id, messages):
+        self.pushes.append((user_id, messages))
 
 
 class LanguageServiceTests(unittest.TestCase):
@@ -250,6 +272,34 @@ class MainRagFlexLocalizationTests(unittest.TestCase):
         self.assertNotIn("บ้านยาสุขใจ", header_text)
         self.assertNotIn("อาการ", first_body_text)
         self.assertNotIn("ติดต่อเภสัชกร", button["label"])
+
+
+class MainLineReplyFallbackTests(unittest.TestCase):
+    def test_reply_or_push_uses_reply_token_when_it_is_valid(self):
+        import main
+
+        fake_line_api = FakeLineBotApi()
+
+        main.reply_or_push_message(fake_line_api, "U123", "reply-token", "message")
+
+        self.assertEqual(fake_line_api.replies, [("reply-token", "message")])
+        self.assertEqual(fake_line_api.pushes, [])
+
+    def test_reply_or_push_falls_back_to_push_when_reply_token_is_invalid(self):
+        import main
+
+        invalid_reply_error = LineBotApiError(
+            status_code=400,
+            headers={},
+            request_id="request-id",
+            error=FakeLineError("Invalid reply token"),
+        )
+        fake_line_api = FakeLineBotApi(error=invalid_reply_error)
+
+        main.reply_or_push_message(fake_line_api, "U123", "expired-reply-token", "message")
+
+        self.assertEqual(fake_line_api.replies, [("expired-reply-token", "message")])
+        self.assertEqual(fake_line_api.pushes, [("U123", "message")])
 
 
 if __name__ == "__main__":
