@@ -157,6 +157,46 @@ def process_pharmacy_label(input_path, output_path):
     return w, h
 
 
+def normalize_label_image_for_ai(input_path: str, output_path: str) -> tuple[bool, str]:
+    image = cv2.imread(input_path)
+    if image is None:
+        return False, "image_read_error"
+
+    height, width = image.shape[:2]
+    if height < 1 or width < 1:
+        return False, "empty_image"
+
+    target_width = width
+    if width > 1800:
+        target_width = 1800
+    elif width < 1000:
+        target_width = 1000
+
+    if target_width != width:
+        scale = target_width / width
+        interpolation = cv2.INTER_AREA if target_width < width else cv2.INTER_CUBIC
+        image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=interpolation)
+
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    l_channel, a_channel, b_channel = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=1.8, tileGridSize=(8, 8))
+    enhanced_l = clahe.apply(l_channel)
+    enhanced = cv2.merge((enhanced_l, a_channel, b_channel))
+    normalized = cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
+
+    sharpen_kernel = np.array(
+        [[0, -0.25, 0], [-0.25, 2.0, -0.25], [0, -0.25, 0]],
+        dtype=np.float32,
+    )
+    normalized = cv2.filter2D(normalized, -1, sharpen_kernel)
+
+    if normalized.size == 0:
+        return False, "empty_normalized_image"
+
+    cv2.imwrite(output_path, normalized)
+    return True, "OK"
+
+
 def find_pdpa_divider_y(image) -> int | None:
     if image is None:
         return None
@@ -1133,24 +1173,34 @@ def handle_image(event):
             os.remove(temp_file_path)
         return
 
+    normalized_file_path = f"/tmp/{event.message.id}_normalized.jpg"
+    normalize_ok, normalize_message = normalize_label_image_for_ai(temp_file_path, normalized_file_path)
+    if not normalize_ok:
+        print(f"Image preprocessing failed for {event.message.id}: {normalize_message}")
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=t(user_language, "generic_processing_error")))
+        for path in (temp_file_path, normalized_file_path):
+            if os.path.exists(path):
+                os.remove(path)
+        return
+
     safe_file_path = f"/tmp/{event.message.id}_safe.jpg"
-    pdpa_ok, pdpa_message = create_pdpa_safe_image(temp_file_path, safe_file_path)
+    pdpa_ok, pdpa_message = create_pdpa_safe_image(normalized_file_path, safe_file_path)
     if not pdpa_ok:
         print(f"⚠️ PDPA masking failed for {event.message.id}: {pdpa_message}")
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=t(user_language, "pdpa_masking_failed")))
-        for path in (temp_file_path, safe_file_path):
+        for path in (temp_file_path, normalized_file_path, safe_file_path):
             if os.path.exists(path):
                 os.remove(path)
         return
 
     # ==========================================
-    # เฟส 2: ข้ามการประมวลผลล้างรูปภาพ (ส่งภาพสีต้นฉบับให้ AI)
+    # Phase 2: read only the PDPA-safe, lightly normalized image for Gemini.
     # ==========================================
     with open(safe_file_path, "rb") as image_file:
         image_bytes = image_file.read()
 
     # ลบไฟล์ชั่วคราวทิ้งหลังอ่านเสร็จ
-    for path in (temp_file_path, safe_file_path):
+    for path in (temp_file_path, normalized_file_path, safe_file_path):
         if os.path.exists(path):
             os.remove(path)
 

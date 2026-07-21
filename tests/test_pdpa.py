@@ -77,6 +77,15 @@ class PdpaMaskingTests(unittest.TestCase):
         cv2.putText(image, "LACTULOSE", (70, 275), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (20, 20, 20), 2)
         cv2.imwrite(path, image)
 
+    def _write_large_low_contrast_label(self, path: str) -> None:
+        image = np.full((2400, 3600, 3), 225, dtype=np.uint8)
+        cv2.putText(image, "BANYA SOOKJAI 0612899146", (560, 420), cv2.FONT_HERSHEY_SIMPLEX, 2.0, (85, 85, 85), 5)
+        cv2.putText(image, "Customer: allergy history", (560, 560), cv2.FONT_HERSHEY_SIMPLEX, 1.7, (90, 90, 90), 4)
+        cv2.line(image, (560, 720), (2860, 720), (75, 75, 75), 3)
+        cv2.putText(image, "HEPALAC 100ML", (560, 980), cv2.FONT_HERSHEY_SIMPLEX, 2.8, (45, 45, 45), 8)
+        cv2.putText(image, "LACTULOSE", (560, 1160), cv2.FONT_HERSHEY_SIMPLEX, 2.5, (45, 45, 45), 7)
+        cv2.imwrite(path, image)
+
     def _assert_top_masked_and_body_readable(self, safe_image) -> None:
         gray = cv2.cvtColor(safe_image, cv2.COLOR_BGR2GRAY)
         top_band_dark_ratio = np.mean(gray[:120, :] < 20)
@@ -167,6 +176,46 @@ class PdpaMaskingTests(unittest.TestCase):
 
             self.assertGreater(masked_rows.size, 0)
             self.assertLess(int(masked_rows[-1]), 205)
+            self._assert_top_masked_and_body_readable(safe_image)
+
+    def test_normalize_label_image_for_ai_resizes_large_image_and_preserves_color(self):
+        import main
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = str(Path(temp_dir) / "large_label.jpg")
+            output_path = str(Path(temp_dir) / "normalized_label.jpg")
+            self._write_large_low_contrast_label(input_path)
+
+            ok, message = main.normalize_label_image_for_ai(input_path, output_path)
+
+            self.assertTrue(ok, message)
+            normalized = cv2.imread(output_path)
+            self.assertIsNotNone(normalized)
+            self.assertEqual(len(normalized.shape), 3)
+            self.assertLessEqual(normalized.shape[1], 1800)
+            self.assertGreaterEqual(normalized.shape[1], 1000)
+
+    def test_normalized_image_can_be_pdpa_masked_without_hiding_medicine_name(self):
+        import main
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = str(Path(temp_dir) / "large_label.jpg")
+            normalized_path = str(Path(temp_dir) / "normalized_label.jpg")
+            safe_path = str(Path(temp_dir) / "safe_label.jpg")
+            self._write_large_low_contrast_label(input_path)
+
+            ok, message = main.normalize_label_image_for_ai(input_path, normalized_path)
+            self.assertTrue(ok, message)
+            ok, message = main.create_pdpa_safe_image(normalized_path, safe_path)
+
+            self.assertTrue(ok, message)
+            safe_image = cv2.imread(safe_path)
+            self.assertIsNotNone(safe_image)
+            gray = cv2.cvtColor(safe_image, cv2.COLOR_BGR2GRAY)
+            masked_rows = np.where(np.mean(gray < 20, axis=1) > 0.95)[0]
+
+            self.assertGreater(masked_rows.size, 0)
+            self.assertLess(int(masked_rows[-1]), int(safe_image.shape[0] * 0.38))
             self._assert_top_masked_and_body_readable(safe_image)
 
     def test_check_image_quality_allows_moderate_glare_for_user_experience(self):
