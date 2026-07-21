@@ -68,7 +68,15 @@ class PdpaMaskingTests(unittest.TestCase):
         cv2.putText(image, "NORETHISTERONE", (235, 355), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (20, 20, 20), 2)
         cv2.imwrite(path, image)
 
-    def test_create_pdpa_safe_image_crops_personal_data_above_divider(self):
+    def _assert_top_masked_and_body_readable(self, safe_image) -> None:
+        gray = cv2.cvtColor(safe_image, cv2.COLOR_BGR2GRAY)
+        top_band_dark_ratio = np.mean(gray[:120, :] < 20)
+        body_band_dark_ratio = np.mean(gray[220:, :] < 80)
+
+        self.assertGreater(top_band_dark_ratio, 0.85)
+        self.assertGreater(body_band_dark_ratio, 0.003)
+
+    def test_create_pdpa_safe_image_masks_personal_data_above_divider(self):
         import main
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -81,17 +89,10 @@ class PdpaMaskingTests(unittest.TestCase):
             self.assertTrue(ok, message)
             safe_image = cv2.imread(output_path)
             self.assertIsNotNone(safe_image)
-            self.assertLess(safe_image.shape[0], 380)
-            self.assertGreater(safe_image.shape[0], 250)
+            self.assertEqual(safe_image.shape[:2], (520, 820))
+            self._assert_top_masked_and_body_readable(safe_image)
 
-            gray = cv2.cvtColor(safe_image, cv2.COLOR_BGR2GRAY)
-            top_band_dark_ratio = np.mean(gray[:45, :] < 80)
-            body_band_dark_ratio = np.mean(gray[45:, :] < 80)
-
-            self.assertLess(top_band_dark_ratio, 0.08)
-            self.assertGreater(body_band_dark_ratio, 0.005)
-
-    def test_create_pdpa_safe_image_fails_closed_when_divider_is_missing(self):
+    def test_create_pdpa_safe_image_uses_conservative_mask_when_divider_is_missing(self):
         import main
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -101,9 +102,11 @@ class PdpaMaskingTests(unittest.TestCase):
 
             ok, message = main.create_pdpa_safe_image(input_path, output_path)
 
-            self.assertFalse(ok)
-            self.assertIn("divider", message)
-            self.assertFalse(Path(output_path).exists())
+            self.assertTrue(ok, message)
+            safe_image = cv2.imread(output_path)
+            self.assertIsNotNone(safe_image)
+            self.assertEqual(safe_image.shape[:2], (520, 820))
+            self._assert_top_masked_and_body_readable(safe_image)
 
     def test_create_pdpa_safe_image_detects_internal_divider_inside_label_border(self):
         import main
@@ -118,8 +121,8 @@ class PdpaMaskingTests(unittest.TestCase):
             self.assertTrue(ok, message)
             safe_image = cv2.imread(output_path)
             self.assertIsNotNone(safe_image)
-            self.assertLess(safe_image.shape[0], 470)
-            self.assertGreater(safe_image.shape[0], 320)
+            self.assertEqual(safe_image.shape[:2], (720, 960))
+            self._assert_top_masked_and_body_readable(safe_image)
 
     def test_create_pdpa_safe_image_uses_label_bounds_fallback_when_divider_is_not_detectable(self):
         import main
@@ -134,8 +137,8 @@ class PdpaMaskingTests(unittest.TestCase):
             self.assertTrue(ok, message)
             safe_image = cv2.imread(output_path)
             self.assertIsNotNone(safe_image)
-            self.assertLess(safe_image.shape[0], 470)
-            self.assertGreater(safe_image.shape[0], 300)
+            self.assertEqual(safe_image.shape[:2], (720, 960))
+            self._assert_top_masked_and_body_readable(safe_image)
 
     def test_check_image_quality_allows_moderate_glare_for_user_experience(self):
         import main

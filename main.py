@@ -238,19 +238,20 @@ def create_pdpa_safe_image(input_path: str, output_path: str) -> tuple[bool, str
     divider_y = find_pdpa_divider_y(image)
     height = image.shape[0]
 
-    if divider_y is None:
-        label_bounds = find_label_bounds(image)
-        if label_bounds is None:
-            return False, "divider_not_found"
-        _, label_y, _, label_h = label_bounds
-        crop_y = label_y + int(label_h * 0.31)
+    if divider_y is not None:
+        mask_bottom = divider_y + max(6, int(height * 0.01))
     else:
-        crop_y = divider_y + max(6, int(height * 0.01))
+        label_bounds = find_label_bounds(image)
+        if label_bounds is not None:
+            _, label_y, _, label_h = label_bounds
+            mask_bottom = label_y + int(label_h * 0.28)
+        else:
+            mask_bottom = int(height * 0.50)
 
-    if crop_y <= 0 or crop_y >= int(height * 0.8):
-        return False, "divider_out_of_safe_range"
+    mask_bottom = max(1, min(mask_bottom, int(height * 0.65)))
+    safe_image = image.copy()
+    safe_image[:mask_bottom, :] = (0, 0, 0)
 
-    safe_image = image[crop_y:, :]
     if safe_image.size == 0:
         return False, "empty_safe_image"
 
