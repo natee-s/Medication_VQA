@@ -195,6 +195,35 @@ def find_pdpa_divider_y(image) -> int | None:
             candidates.append((x, y, w, h))
 
     if not candidates:
+        projection_sources = [
+            np.mean(thresh > 0, axis=1),
+            np.mean(cv2.Canny(blur, 30, 100) > 0, axis=1),
+        ]
+
+        for row_score in projection_sources:
+            active_rows = np.where(row_score > 0.14)[0]
+            projection_candidates = []
+
+            if active_rows.size:
+                start = int(active_rows[0])
+                previous = int(active_rows[0])
+                for row in active_rows[1:]:
+                    row = int(row)
+                    if row == previous + 1:
+                        previous = row
+                        continue
+
+                    projection_candidates.append((start, previous))
+                    start = previous = row
+                projection_candidates.append((start, previous))
+
+            for start, end in projection_candidates:
+                group_height = end - start + 1
+                is_thin_group = group_height <= max(25, int(detect_height * 0.015))
+                is_divider_zone = detect_height * 0.25 <= start <= detect_height * 0.45
+                if is_thin_group and is_divider_zone:
+                    return int((end + 1) / scale)
+
         return None
 
     _, y, _, h = min(candidates, key=lambda item: item[1])

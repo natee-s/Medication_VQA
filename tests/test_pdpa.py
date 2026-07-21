@@ -68,6 +68,15 @@ class PdpaMaskingTests(unittest.TestCase):
         cv2.putText(image, "NORETHISTERONE", (235, 355), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (20, 20, 20), 2)
         cv2.imwrite(path, image)
 
+    def _write_white_background_label_with_thin_divider(self, path: str) -> None:
+        image = np.full((520, 820, 3), 245, dtype=np.uint8)
+        cv2.putText(image, "BANYA SOOKJAI 0612899146", (70, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (30, 30, 30), 2)
+        cv2.putText(image, "Customer: allergy history", (70, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (30, 30, 30), 2)
+        cv2.line(image, (70, 165), (610, 165), (120, 120, 120), 1)
+        cv2.putText(image, "HEPALAC 100ML", (70, 225), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (20, 20, 20), 3)
+        cv2.putText(image, "LACTULOSE", (70, 275), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (20, 20, 20), 2)
+        cv2.imwrite(path, image)
+
     def _assert_top_masked_and_body_readable(self, safe_image) -> None:
         gray = cv2.cvtColor(safe_image, cv2.COLOR_BGR2GRAY)
         top_band_dark_ratio = np.mean(gray[:120, :] < 20)
@@ -138,6 +147,26 @@ class PdpaMaskingTests(unittest.TestCase):
             safe_image = cv2.imread(output_path)
             self.assertIsNotNone(safe_image)
             self.assertEqual(safe_image.shape[:2], (720, 960))
+            self._assert_top_masked_and_body_readable(safe_image)
+
+    def test_create_pdpa_safe_image_detects_thin_divider_on_white_background(self):
+        import main
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = str(Path(temp_dir) / "thin_divider_label.jpg")
+            output_path = str(Path(temp_dir) / "safe_label.jpg")
+            self._write_white_background_label_with_thin_divider(input_path)
+
+            ok, message = main.create_pdpa_safe_image(input_path, output_path)
+
+            self.assertTrue(ok, message)
+            safe_image = cv2.imread(output_path)
+            self.assertIsNotNone(safe_image)
+            gray = cv2.cvtColor(safe_image, cv2.COLOR_BGR2GRAY)
+            masked_rows = np.where(np.mean(gray < 20, axis=1) > 0.95)[0]
+
+            self.assertGreater(masked_rows.size, 0)
+            self.assertLess(int(masked_rows[-1]), 205)
             self._assert_top_masked_and_body_readable(safe_image)
 
     def test_check_image_quality_allows_moderate_glare_for_user_experience(self):
