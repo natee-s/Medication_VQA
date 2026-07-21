@@ -47,6 +47,27 @@ class PdpaMaskingTests(unittest.TestCase):
         cv2.rectangle(image, (600, 260), (790, 440), (255, 255, 255), -1)
         cv2.imwrite(path, image)
 
+    def _write_label_on_background_with_internal_divider(self, path: str) -> None:
+        image = np.full((720, 960, 3), (70, 55, 45), dtype=np.uint8)
+        cv2.rectangle(image, (210, 130), (760, 600), (228, 228, 218), -1)
+        cv2.rectangle(image, (210, 130), (760, 600), (170, 170, 160), 3)
+        cv2.putText(image, "BANYA SOOKJAI 0612899146", (235, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (35, 35, 35), 2)
+        cv2.putText(image, "Customer: allergy history", (235, 220), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (35, 35, 35), 2)
+        cv2.line(image, (230, 255), (735, 255), (10, 10, 10), 3)
+        cv2.putText(image, "PINRONE/NORCA 5 MG", (235, 315), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (20, 20, 20), 2)
+        cv2.putText(image, "NORETHISTERONE", (235, 355), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (20, 20, 20), 2)
+        cv2.imwrite(path, image)
+
+    def _write_label_on_background_without_detectable_divider(self, path: str) -> None:
+        image = np.full((720, 960, 3), (70, 55, 45), dtype=np.uint8)
+        cv2.rectangle(image, (210, 130), (760, 600), (228, 228, 218), -1)
+        cv2.rectangle(image, (210, 130), (760, 600), (170, 170, 160), 3)
+        cv2.putText(image, "BANYA SOOKJAI 0612899146", (235, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (35, 35, 35), 2)
+        cv2.putText(image, "Customer: allergy history", (235, 220), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (35, 35, 35), 2)
+        cv2.putText(image, "PINRONE/NORCA 5 MG", (235, 315), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (20, 20, 20), 2)
+        cv2.putText(image, "NORETHISTERONE", (235, 355), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (20, 20, 20), 2)
+        cv2.imwrite(path, image)
+
     def test_create_pdpa_safe_image_crops_personal_data_above_divider(self):
         import main
 
@@ -83,6 +104,38 @@ class PdpaMaskingTests(unittest.TestCase):
             self.assertFalse(ok)
             self.assertIn("divider", message)
             self.assertFalse(Path(output_path).exists())
+
+    def test_create_pdpa_safe_image_detects_internal_divider_inside_label_border(self):
+        import main
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = str(Path(temp_dir) / "label_on_background.jpg")
+            output_path = str(Path(temp_dir) / "safe_label.jpg")
+            self._write_label_on_background_with_internal_divider(input_path)
+
+            ok, message = main.create_pdpa_safe_image(input_path, output_path)
+
+            self.assertTrue(ok, message)
+            safe_image = cv2.imread(output_path)
+            self.assertIsNotNone(safe_image)
+            self.assertLess(safe_image.shape[0], 470)
+            self.assertGreater(safe_image.shape[0], 320)
+
+    def test_create_pdpa_safe_image_uses_label_bounds_fallback_when_divider_is_not_detectable(self):
+        import main
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = str(Path(temp_dir) / "label_on_background_without_divider.jpg")
+            output_path = str(Path(temp_dir) / "safe_label.jpg")
+            self._write_label_on_background_without_detectable_divider(input_path)
+
+            ok, message = main.create_pdpa_safe_image(input_path, output_path)
+
+            self.assertTrue(ok, message)
+            safe_image = cv2.imread(output_path)
+            self.assertIsNotNone(safe_image)
+            self.assertLess(safe_image.shape[0], 470)
+            self.assertGreater(safe_image.shape[0], 300)
 
     def test_check_image_quality_allows_moderate_glare_for_user_experience(self):
         import main

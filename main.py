@@ -176,27 +176,58 @@ def find_pdpa_divider_y(image) -> int | None:
     _, thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
     detect_height, detect_width = thresh.shape[:2]
-    kernel_width = max(45, int(detect_width * 0.18))
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_width, 3))
-    closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+    horizontal_kernel = cv2.getStructuringElement(
+        cv2.MORPH_RECT,
+        (max(60, int(detect_width * 0.28)), 2),
+    )
+    horizontal_lines = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, horizontal_kernel)
 
-    contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(horizontal_lines, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
     candidates = []
     for contour in contours:
         x, y, w, h = cv2.boundingRect(contour)
-        is_long = w >= detect_width * 0.45
+        is_long = w >= detect_width * 0.28
         is_thin = h <= max(10, int(detect_height * 0.025))
-        is_header_divider_zone = detect_height * 0.08 <= y <= detect_height * 0.5
+        is_header_divider_zone = detect_height * 0.12 <= y <= detect_height * 0.55
         dark_density = float(np.mean(thresh[y:y + h, x:x + w] > 0))
-        is_solid_line = dark_density >= 0.45
+        is_solid_line = dark_density >= 0.35
         if is_long and is_thin and is_header_divider_zone and is_solid_line:
             candidates.append((x, y, w, h))
 
     if not candidates:
         return None
 
-    _, y, _, h = max(candidates, key=lambda item: item[2])
+    _, y, _, h = min(candidates, key=lambda item: item[1])
     return int((y + h) / scale)
+
+
+def find_label_bounds(image) -> tuple[int, int, int, int] | None:
+    if image is None:
+        return None
+
+    height, width = image.shape[:2]
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    _, bright = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
+    closed = cv2.morphologyEx(bright, cv2.MORPH_CLOSE, kernel)
+
+    contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    candidates = []
+    total_area = height * width
+    for contour in contours:
+        x, y, w, h = cv2.boundingRect(contour)
+        area_ratio = (w * h) / total_area
+        aspect_ratio = w / max(h, 1)
+        has_margin = w < width * 0.95 and h < height * 0.95
+        if 0.12 <= area_ratio <= 0.85 and 0.7 <= aspect_ratio <= 2.8 and has_margin:
+            candidates.append((x, y, w, h))
+
+    if not candidates:
+        return None
+
+    return max(candidates, key=lambda item: item[2] * item[3])
 
 
 def create_pdpa_safe_image(input_path: str, output_path: str) -> tuple[bool, str]:
@@ -205,12 +236,18 @@ def create_pdpa_safe_image(input_path: str, output_path: str) -> tuple[bool, str
         return False, "image_read_error"
 
     divider_y = find_pdpa_divider_y(image)
-    if divider_y is None:
-        return False, "divider_not_found"
-
     height = image.shape[0]
-    crop_y = divider_y + max(6, int(height * 0.01))
-    if crop_y <= 0 or crop_y >= int(height * 0.55):
+
+    if divider_y is None:
+        label_bounds = find_label_bounds(image)
+        if label_bounds is None:
+            return False, "divider_not_found"
+        _, label_y, _, label_h = label_bounds
+        crop_y = label_y + int(label_h * 0.31)
+    else:
+        crop_y = divider_y + max(6, int(height * 0.01))
+
+    if crop_y <= 0 or crop_y >= int(height * 0.8):
         return False, "divider_out_of_safe_range"
 
     safe_image = image[crop_y:, :]
