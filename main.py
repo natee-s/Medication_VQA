@@ -542,6 +542,153 @@ def build_medicine_label_flex_reply(lang: str, display_data: dict, time_payload:
     }
 
 
+def get_timing_text(lang: str, timing: str) -> str:
+    key = "timing_before" if timing == "before" else "timing_after"
+    return t(lang, key)
+
+
+def get_meal_text(lang: str, meal: str) -> str:
+    key_by_meal = {
+        "morning": "meal_morning",
+        "noon": "meal_noon",
+        "evening": "meal_evening",
+        "bedtime": "meal_bedtime",
+    }
+    return t(lang, key_by_meal.get(meal, "meal_morning"))
+
+
+def get_reminder_meal_display(lang: str, meal: str, timing: str) -> str:
+    key = f"reminder_meal_{'before' if timing == 'before' else 'after'}_{meal}"
+    return t(lang, key)
+
+
+def build_acknowledge_reply(lang: str) -> str:
+    return t(lang, "acknowledge_saved_message")
+
+
+def build_reminder_saved_reply(lang: str, drug_name: str, timing: str) -> str:
+    return t(
+        lang,
+        "reminder_saved_message",
+        drug=drug_name,
+        timing=get_timing_text(lang, timing),
+    )
+
+
+def build_stop_drug_reply(lang: str, drug_name: str) -> str:
+    return t(lang, "medicine_finished_message", drug=drug_name)
+
+
+def build_take_pill_reply(lang: str, meal: str) -> str:
+    return t(lang, "take_pill_saved_message", meal=get_meal_text(lang, meal))
+
+
+def build_snooze_reply(lang: str) -> str:
+    return t(lang, "snooze_message")
+
+
+def build_reminder_alert_flex(lang: str, meal: str, timing: str, drugs: list[dict]) -> dict:
+    meal_display = get_reminder_meal_display(lang, meal, timing)
+    drug_list_contents = []
+
+    for drug in drugs:
+        drug_name = drug.get("drug_name", "")
+        drug_list_contents.append(
+            {
+                "type": "box",
+                "layout": "horizontal",
+                "spacing": "sm",
+                "margin": "md",
+                "contents": [
+                    {
+                        "type": "text",
+                        "text": f"💊 {drug_name}",
+                        "size": "sm",
+                        "weight": "bold",
+                        "color": "#333333",
+                        "gravity": "center",
+                        "wrap": True,
+                        "flex": 2,
+                    },
+                    {
+                        "type": "button",
+                        "style": "secondary",
+                        "height": "sm",
+                        "flex": 1,
+                        "action": {
+                            "type": "postback",
+                            "label": t(lang, "medicine_finished_button"),
+                            "data": f"action=stop_drug&drug={drug_name}",
+                        },
+                    },
+                ],
+            }
+        )
+
+    return {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#FFC107",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": f"🔔 {t(lang, 'reminder_alert_title')}",
+                    "weight": "bold",
+                    "size": "lg",
+                    "color": "#FFFFFF",
+                }
+            ],
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "md",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": f"{t(lang, 'reminder_meal_label')}: {meal_display}",
+                    "weight": "bold",
+                    "size": "md",
+                    "color": "#1DB446",
+                },
+                {"type": "separator", "margin": "md"},
+            ]
+            + drug_list_contents,
+        },
+        "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "sm",
+            "contents": [
+                {
+                    "type": "button",
+                    "style": "primary",
+                    "color": "#1DB446",
+                    "height": "sm",
+                    "action": {
+                        "type": "postback",
+                        "label": f"✅ {t(lang, 'take_all_button')}",
+                        "data": f"action=take_pill&meal={meal}",
+                    },
+                },
+                {
+                    "type": "button",
+                    "style": "secondary",
+                    "height": "sm",
+                    "action": {
+                        "type": "postback",
+                        "label": f"💤 {t(lang, 'snooze_button')}",
+                        "data": f"action=snooze&meal={meal}",
+                    },
+                },
+            ],
+        },
+    }
+
+
 def build_language_picker(lang: str = DEFAULT_LANGUAGE) -> dict:
     return {
         "type": "bubble",
@@ -643,6 +790,7 @@ def check_reminder():
 
         for user in users:
             uid = user.get("line_uid")
+            user_language = normalize_language(user.get("language"))
             
             t_morning = str(user.get("default_morning"))[:5] if user.get("default_morning") else "08:00"
             t_noon = str(user.get("default_noon"))[:5] if user.get("default_noon") else "12:00"
@@ -677,6 +825,7 @@ def check_reminder():
                 meal_col = trigger["meal"]
                 timing = trigger["timing"]
                 meal_name_th = trigger["meal_name_th"]
+                meal_display = get_reminder_meal_display(user_language, meal_col, timing)
                 
                 # ค้นหายาที่ผูกกับเวลาและประเภทก่อน/หลังอาหารนี้
                 reminders_res = supabase.table("reminder_schedules").select("drug_name")\
@@ -684,6 +833,17 @@ def check_reminder():
                 drugs = reminders_res.data
                 
                 if drugs:
+                    flex_alert = build_reminder_alert_flex(user_language, meal_col, timing, drugs)
+                    line_bot_api.push_message(
+                        uid,
+                        FlexSendMessage(
+                            alt_text=t(user_language, "reminder_alt_text", meal=meal_display),
+                            contents=flex_alert,
+                        )
+                    )
+                    count_messages_sent += 1
+                    continue
+
                     drug_list_contents = []
                     for d in drugs:
                         drug_name = d["drug_name"]
@@ -963,6 +1123,7 @@ def handle_image(event):
 def handle_postback(event):
     data = event.postback.data
     user_id = event.source.user_id
+    user_language = get_user_language(user_id)
 
     if data.startswith("action=set_language"):
         postback_dict = dict(parse_qsl(data))
@@ -984,6 +1145,12 @@ def handle_postback(event):
     # กรณีที่ 1: ผู้ใช้กดปุ่ม "✅ รับทราบ"
     # ----------------------------------------
     if data == "action=acknowledge":
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=build_acknowledge_reply(user_language))
+        )
+        return
+
         line_bot_api.reply_message(
             event.reply_token,
             TextSendMessage(text="✅ ระบบรับทราบเรียบร้อยครับ คุณสามารถพิมพ์สอบถามข้อมูลเกี่ยวกับยานี้เพิ่มเติมได้เลยครับ หรือหากต้องการให้อ่านฉลากยาตัวอื่น สามารถส่งรูปมาได้เลยครับ")
@@ -1025,6 +1192,10 @@ def handle_postback(event):
             }
             supabase.table("reminder_schedules").insert(reminder_payload).execute()
 
+            reply_text = build_reminder_saved_reply(user_language, drug_name, meal_timing)
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+            return
+
             # สร้างข้อความแจ้งลูกค้าให้ชัดเจนขึ้น
             timing_th = "ก่อนอาหาร" if meal_timing == "before" else "หลังอาหาร"
             reply_text = f"⏰ ตั้งเวลาเตือนสำหรับยา {drug_name} ({timing_th}) ลงในระบบเรียบร้อยครับ!"
@@ -1033,6 +1204,9 @@ def handle_postback(event):
             
         except Exception as e:
             print(f"Error saving reminder: {e}")
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=t(user_language, "reminder_save_error")))
+            return
+
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="❌ เกิดข้อผิดพลาดในการบันทึกข้อมูลลงฐานข้อมูล กรุณาลองใหม่อีกครั้ง"))
             
     # ----------------------------------------
@@ -1049,16 +1223,28 @@ def handle_postback(event):
                 # อัปเดตให้ยาตัวนี้ is_active = False ในฐานข้อมูล
                 supabase.table("reminder_schedules").update({"is_active": False}).eq("line_uid", user_id).eq("drug_name", drug_name).execute()
                 
+                reply_text = build_stop_drug_reply(user_language, drug_name)
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+                print(f"✅ ยกเลิกการแจ้งเตือนยา {drug_name} ให้ผู้ใช้ {user_id} สำเร็จ")
+                return
+
                 reply_text = f"⏹️ ระบบได้บันทึกว่า {drug_name} หมดแล้ว และจะหยุดการแจ้งเตือนยารายการนี้ครับ"
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
                 print(f"✅ ยกเลิกการแจ้งเตือนยา {drug_name} ให้ผู้ใช้ {user_id} สำเร็จ")
             except Exception as e:
                 print(f"❌ Error stopping drug reminder: {e}")
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=t(user_language, "medicine_finished_error")))
+                return
+
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text="❌ เกิดข้อผิดพลาดในการยกเลิกแจ้งเตือนครับ"))
 
         elif action == "take_pill":
             # 🎯 ลอจิก: ตอบรับเมื่อกดกินยาทั้งหมด
             meal = postback_dict.get("meal", "")
+            reply_text = build_take_pill_reply(user_language, meal)
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+            return
+
             meal_th = {"morning": "เช้า", "noon": "กลางวัน", "evening": "เย็น", "bedtime": "ก่อนนอน"}.get(meal, "")
             
             reply_text = f"✅ ยอดเยี่ยมมากครับ! บันทึกการทานยามื้อ{meal_th} เรียบร้อยแล้ว ขอให้สุขภาพแข็งแรงนะครับ 💙"
@@ -1066,6 +1252,10 @@ def handle_postback(event):
             
         elif action == "snooze":
             # 🎯 ลอจิก: ตอบรับการเลื่อน (เฟสนี้ใช้ข้อความตอบรับไปก่อน)
+            reply_text = build_snooze_reply(user_language)
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+            return
+
             reply_text = f"💤 รับทราบครับ เลื่อนการแจ้งเตือนออกไป 15 นาที ถ้าพร้อมทานยาแล้ว อย่าลืมหยิบมาทานนะครับ"
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
 

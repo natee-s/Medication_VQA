@@ -368,6 +368,59 @@ class MainMedicineLabelFlexLocalizationTests(unittest.TestCase):
         self.assertEqual(display["warning"], "请勿超过推荐剂量")
 
 
+class MainReminderLocalizationTests(unittest.TestCase):
+    def test_postback_reply_text_uses_selected_language(self):
+        import main
+
+        self.assertEqual(
+            main.build_acknowledge_reply("zh"),
+            "✅ 系统已确认。您可以继续询问此药品，或发送另一张药品标签照片。",
+        )
+        self.assertEqual(
+            main.build_reminder_saved_reply("zh", "PROCTASE-P", "after"),
+            "⏰ 已为 PROCTASE-P（饭后）设置用药提醒。",
+        )
+        self.assertEqual(
+            main.build_take_pill_reply("zh", "morning"),
+            "✅ 做得好！已记录您早晨的用药。祝您身体健康 💙",
+        )
+        self.assertEqual(
+            main.build_snooze_reply("zh"),
+            "💤 已确认。提醒将延后 15 分钟。准备好时请记得服药。",
+        )
+        self.assertEqual(
+            main.build_stop_drug_reply("zh", "PROCTASE-P"),
+            "⏹️ 已记录 PROCTASE-P 已用完，并停止此药品的提醒。",
+        )
+
+    def test_reminder_alert_flex_uses_selected_language_for_static_labels(self):
+        import main
+
+        flex = main.build_reminder_alert_flex(
+            "my",
+            meal="morning",
+            timing="after",
+            drugs=[{"drug_name": "PROCTASE-P"}],
+        )
+
+        header_text = flex["header"]["contents"][0]["text"]
+        meal_text = flex["body"]["contents"][0]["text"]
+        drug_button_label = flex["body"]["contents"][2]["contents"][1]["action"]["label"]
+        footer_labels = [
+            item["action"]["label"]
+            for item in flex["footer"]["contents"]
+            if item.get("type") == "button"
+        ]
+
+        self.assertEqual(header_text, "🔔 ဆေးသောက်ရန် အချိန်ရောက်ပါပြီ!")
+        self.assertEqual(meal_text, "မုန့်/အစားအစာ: မနက်စာစားပြီး 🌅")
+        self.assertEqual(drug_button_label, "ဆေးကုန်ပြီ")
+        self.assertEqual(footer_labels, ["✅ ဆေးအားလုံး သောက်ပြီးပြီ", "💤 15 မိနစ်ရွှေ့မည်"])
+        self.assertNotIn("ได้เวลากินยา", header_text)
+        self.assertNotIn("มื้อ", meal_text)
+        self.assertNotIn("ยาหมด", drug_button_label)
+
+
 class MainLineReplyFallbackTests(unittest.TestCase):
     def test_reply_or_push_uses_reply_token_when_it_is_valid(self):
         import main
