@@ -63,7 +63,7 @@ def check_image_quality(file_path):
     # ตรวจแสงสะท้อน (พิกเซลสว่างจัด > 240 มีมากกว่า 5% ของพื้นที่ภาพ)
     glare_ratio = np.sum(gray > 240) / gray.size
     print(f"🔍 [TEST] ค่าแสงสะท้อนรูปนี้คือ: {glare_ratio}")
-    if glare_ratio > 0.05:
+    if glare_ratio > 0.12:
         return False, "⚠️ รูปภาพมีแสงแฟลชสะท้อนบังข้อความ กรุณาหลีกเลี่ยงแสงสะท้อนแล้วถ่ายใหม่ครับ"
 
     # 3. ตรวจสอบความเปรียบต่างสี (Contrast)
@@ -155,6 +155,70 @@ def process_pharmacy_label(input_path, output_path):
     cv2.imwrite(output_path, processed)
     h, w = processed.shape
     return w, h
+
+
+def find_pdpa_divider_y(image) -> int | None:
+    if image is None:
+        return None
+
+    height, width = image.shape[:2]
+    if width < 1 or height < 1:
+        return None
+
+    scale = 1.0
+    detection_image = image
+    if width < 1000:
+        scale = 1000 / width
+        detection_image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+
+    gray = cv2.cvtColor(detection_image, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    _, thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+    detect_height, detect_width = thresh.shape[:2]
+    kernel_width = max(45, int(detect_width * 0.18))
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_width, 3))
+    closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+
+    contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    candidates = []
+    for contour in contours:
+        x, y, w, h = cv2.boundingRect(contour)
+        is_long = w >= detect_width * 0.45
+        is_thin = h <= max(10, int(detect_height * 0.025))
+        is_header_divider_zone = detect_height * 0.08 <= y <= detect_height * 0.5
+        dark_density = float(np.mean(thresh[y:y + h, x:x + w] > 0))
+        is_solid_line = dark_density >= 0.45
+        if is_long and is_thin and is_header_divider_zone and is_solid_line:
+            candidates.append((x, y, w, h))
+
+    if not candidates:
+        return None
+
+    _, y, _, h = max(candidates, key=lambda item: item[2])
+    return int((y + h) / scale)
+
+
+def create_pdpa_safe_image(input_path: str, output_path: str) -> tuple[bool, str]:
+    image = cv2.imread(input_path)
+    if image is None:
+        return False, "image_read_error"
+
+    divider_y = find_pdpa_divider_y(image)
+    if divider_y is None:
+        return False, "divider_not_found"
+
+    height = image.shape[0]
+    crop_y = divider_y + max(6, int(height * 0.01))
+    if crop_y <= 0 or crop_y >= int(height * 0.55):
+        return False, "divider_out_of_safe_range"
+
+    safe_image = image[crop_y:, :]
+    if safe_image.size == 0:
+        return False, "empty_safe_image"
+
+    cv2.imwrite(output_path, safe_image)
+    return True, "OK"
 # ==========================================
 # ⚡ ฟิลเตอร์ซ่อน Log Uvicorn เฉพาะเส้นทาง Cron Job
 # ==========================================
@@ -1002,15 +1066,26 @@ def handle_image(event):
             os.remove(temp_file_path)
         return
 
+    safe_file_path = f"/tmp/{event.message.id}_safe.jpg"
+    pdpa_ok, pdpa_message = create_pdpa_safe_image(temp_file_path, safe_file_path)
+    if not pdpa_ok:
+        print(f"⚠️ PDPA masking failed for {event.message.id}: {pdpa_message}")
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=t(user_language, "pdpa_masking_failed")))
+        for path in (temp_file_path, safe_file_path):
+            if os.path.exists(path):
+                os.remove(path)
+        return
+
     # ==========================================
     # เฟส 2: ข้ามการประมวลผลล้างรูปภาพ (ส่งภาพสีต้นฉบับให้ AI)
     # ==========================================
-    with open(temp_file_path, "rb") as image_file:
+    with open(safe_file_path, "rb") as image_file:
         image_bytes = image_file.read()
 
     # ลบไฟล์ชั่วคราวทิ้งหลังอ่านเสร็จ
-    if os.path.exists(temp_file_path):
-        os.remove(temp_file_path)
+    for path in (temp_file_path, safe_file_path):
+        if os.path.exists(path):
+            os.remove(path)
 
     # ==========================================
     # เฟส 3: เรียกใช้งาน Gemini + ค้นหาข้อมูลจริง (RAG)
