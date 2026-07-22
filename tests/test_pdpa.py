@@ -218,6 +218,65 @@ class PdpaMaskingTests(unittest.TestCase):
             self.assertLess(int(masked_rows[-1]), int(safe_image.shape[0] * 0.38))
             self._assert_top_masked_and_body_readable(safe_image)
 
+    def test_save_pdpa_debug_images_copies_normalized_and_safe_when_enabled(self):
+        import main
+
+        previous_enabled = os.environ.get("SAVE_PDPA_DEBUG_IMAGES")
+        previous_debug_dir = os.environ.get("PDPA_DEBUG_DIR")
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                debug_dir = str(Path(temp_dir) / "debug_pdpa")
+                normalized_path = str(Path(temp_dir) / "MSG123_normalized.jpg")
+                safe_path = str(Path(temp_dir) / "MSG123_safe.jpg")
+                self._write_white_background_label_with_thin_divider(normalized_path)
+                self._write_white_background_label_with_thin_divider(safe_path)
+                os.environ["SAVE_PDPA_DEBUG_IMAGES"] = "true"
+                os.environ["PDPA_DEBUG_DIR"] = debug_dir
+
+                ok, message = main.save_pdpa_debug_images("MSG123", normalized_path, safe_path)
+
+                self.assertTrue(ok, message)
+                self.assertTrue(Path(debug_dir, "MSG123_normalized.jpg").exists())
+                self.assertTrue(Path(debug_dir, "MSG123_safe.jpg").exists())
+        finally:
+            if previous_enabled is None:
+                os.environ.pop("SAVE_PDPA_DEBUG_IMAGES", None)
+            else:
+                os.environ["SAVE_PDPA_DEBUG_IMAGES"] = previous_enabled
+            if previous_debug_dir is None:
+                os.environ.pop("PDPA_DEBUG_DIR", None)
+            else:
+                os.environ["PDPA_DEBUG_DIR"] = previous_debug_dir
+
+    def test_save_pdpa_debug_images_skips_when_disabled(self):
+        import main
+
+        previous_enabled = os.environ.get("SAVE_PDPA_DEBUG_IMAGES")
+        previous_debug_dir = os.environ.get("PDPA_DEBUG_DIR")
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                debug_dir = str(Path(temp_dir) / "debug_pdpa")
+                normalized_path = str(Path(temp_dir) / "MSG123_normalized.jpg")
+                safe_path = str(Path(temp_dir) / "MSG123_safe.jpg")
+                self._write_white_background_label_with_thin_divider(normalized_path)
+                self._write_white_background_label_with_thin_divider(safe_path)
+                os.environ.pop("SAVE_PDPA_DEBUG_IMAGES", None)
+                os.environ["PDPA_DEBUG_DIR"] = debug_dir
+
+                ok, message = main.save_pdpa_debug_images("MSG123", normalized_path, safe_path)
+
+                self.assertTrue(ok, message)
+                self.assertFalse(Path(debug_dir).exists())
+        finally:
+            if previous_enabled is None:
+                os.environ.pop("SAVE_PDPA_DEBUG_IMAGES", None)
+            else:
+                os.environ["SAVE_PDPA_DEBUG_IMAGES"] = previous_enabled
+            if previous_debug_dir is None:
+                os.environ.pop("PDPA_DEBUG_DIR", None)
+            else:
+                os.environ["PDPA_DEBUG_DIR"] = previous_debug_dir
+
     def test_check_image_quality_allows_moderate_glare_for_user_experience(self):
         import main
 
