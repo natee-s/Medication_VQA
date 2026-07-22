@@ -18,7 +18,6 @@ from linebot.models import (
 import os
 import cv2
 import numpy as np
-import shutil
 from google import genai
 from google.genai import types
 import json
@@ -195,27 +194,6 @@ def normalize_label_image_for_ai(input_path: str, output_path: str) -> tuple[boo
         return False, "empty_normalized_image"
 
     cv2.imwrite(output_path, normalized)
-    return True, "OK"
-
-
-def save_pdpa_debug_images(message_id: str, normalized_path: str, safe_path: str) -> tuple[bool, str]:
-    debug_enabled = os.environ.get("SAVE_PDPA_DEBUG_IMAGES", "").strip().lower()
-    if debug_enabled not in {"1", "true", "yes", "on"}:
-        return True, "debug_disabled"
-
-    if not os.path.exists(normalized_path) or not os.path.exists(safe_path):
-        return False, "debug_source_missing"
-
-    debug_dir = os.environ.get("PDPA_DEBUG_DIR", "debug_pdpa")
-    os.makedirs(debug_dir, exist_ok=True)
-
-    safe_message_id = "".join(
-        char if char.isalnum() or char in {"_", "-"} else "_"
-        for char in str(message_id)
-    ).strip("_") or "image"
-
-    shutil.copy2(normalized_path, os.path.join(debug_dir, f"{safe_message_id}_normalized.jpg"))
-    shutil.copy2(safe_path, os.path.join(debug_dir, f"{safe_message_id}_safe.jpg"))
     return True, "OK"
 
 
@@ -1214,10 +1192,6 @@ def handle_image(event):
             if os.path.exists(path):
                 os.remove(path)
         return
-
-    debug_ok, debug_message = save_pdpa_debug_images(event.message.id, normalized_file_path, safe_file_path)
-    if not debug_ok:
-        print(f"PDPA debug image save skipped for {event.message.id}: {debug_message}")
 
     # ==========================================
     # Phase 2: read only the PDPA-safe, lightly normalized image for Gemini.
