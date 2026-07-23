@@ -199,6 +199,10 @@ button {
   padding: 18px;
 }
 
+.preview-panel[hidden] {
+  display: none !important;
+}
+
 .preview-panel img {
   width: min(92vw, 620px);
   aspect-ratio: 1.344 / 1;

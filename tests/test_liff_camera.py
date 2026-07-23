@@ -31,6 +31,17 @@ class LiffCameraTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("text/html", response.headers["content-type"])
         self.assertIn("Medication Label Camera", response.text)
 
+    async def test_liff_camera_css_hides_preview_panel_until_capture(self):
+        import main
+
+        transport = httpx.ASGITransport(app=main.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/static/liff-camera/style.css")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(".preview-panel[hidden]", response.text)
+        self.assertIn("display: none", response.text)
+
     async def test_liff_upload_label_accepts_jpeg(self):
         import main
 
