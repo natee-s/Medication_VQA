@@ -1,0 +1,223 @@
+:root {
+  color-scheme: dark;
+  --guide-width: min(92vw, 620px);
+  --guide-height: calc(var(--guide-width) / 1.344);
+  --green: #1db446;
+  --green-dark: #0b7f33;
+  --panel: rgba(10, 14, 18, 0.72);
+  --line: rgba(255, 255, 255, 0.96);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #050708;
+  color: #ffffff;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+button {
+  border: 0;
+  font: inherit;
+}
+
+.camera-shell {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  min-height: 100dvh;
+  overflow: hidden;
+}
+
+.camera-preview {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #111820;
+}
+
+.top-bar {
+  position: absolute;
+  top: max(18px, env(safe-area-inset-top));
+  left: 16px;
+  right: 16px;
+  z-index: 6;
+  text-align: center;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.75);
+}
+
+.top-bar h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 750;
+}
+
+.top-bar p {
+  max-width: 560px;
+  margin: 8px auto 0;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.guide-panel {
+  position: relative;
+  z-index: 4;
+  width: var(--guide-width);
+  height: var(--guide-height);
+}
+
+.guide-frame {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border: 3px solid var(--line);
+  border-radius: 8px;
+  outline: 999px solid rgba(0, 0, 0, 0.38);
+  box-shadow:
+    0 0 0 2px rgba(29, 180, 70, 0.95),
+    0 12px 36px rgba(0, 0, 0, 0.45);
+}
+
+.guide-frame::before,
+.guide-frame::after {
+  content: "";
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  border-color: var(--green);
+  border-style: solid;
+}
+
+.guide-frame::before {
+  top: -3px;
+  left: -3px;
+  border-width: 5px 0 0 5px;
+  border-top-left-radius: 8px;
+}
+
+.guide-frame::after {
+  right: -3px;
+  bottom: -3px;
+  border-width: 0 5px 5px 0;
+  border-bottom-right-radius: 8px;
+}
+
+.guide-divider {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 25%;
+  height: 3px;
+  background: repeating-linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.95) 0 16px,
+    rgba(29, 180, 70, 0.95) 16px 32px
+  );
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+}
+
+.guide-header-label,
+.guide-body-label {
+  position: absolute;
+  left: 10px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.guide-header-label {
+  top: 8px;
+}
+
+.guide-body-label {
+  top: calc(25% + 10px);
+}
+
+.controls {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: max(20px, env(safe-area-inset-bottom));
+  z-index: 7;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+.primary-button,
+.secondary-button {
+  min-height: 52px;
+  border-radius: 8px;
+  font-weight: 750;
+  color: #ffffff;
+}
+
+.primary-button {
+  background: var(--green);
+}
+
+.primary-button:active {
+  background: var(--green-dark);
+}
+
+.secondary-button {
+  background: rgba(225, 231, 238, 0.9);
+  color: #111820;
+}
+
+.status-text {
+  min-height: 20px;
+  margin: 0;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #f2f5f7;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.75);
+}
+
+.preview-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.82);
+  padding: 18px;
+}
+
+.preview-panel img {
+  width: min(92vw, 620px);
+  aspect-ratio: 1.344 / 1;
+  object-fit: contain;
+  border-radius: 8px;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  background: #111820;
+}
+
+@media (orientation: landscape) {
+  :root {
+    --guide-width: min(68vw, 720px);
+  }
+
+  .top-bar p {
+    display: none;
+  }
+
+  .controls {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}

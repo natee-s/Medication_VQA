@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Medication Label Camera</title>
+    <link rel="stylesheet" href="/static/liff-camera/style.css" />
+  </head>
+  <body>
+    <main class="camera-shell">
+      <video id="cameraPreview" class="camera-preview" autoplay playsinline muted></video>
+      <canvas id="captureCanvas" width="1344" height="1000" hidden></canvas>
+
+      <div class="shade shade-top"></div>
+      <div class="shade shade-bottom"></div>
+      <div class="shade shade-left"></div>
+      <div class="shade shade-right"></div>
+
+      <section class="guide-panel" aria-label="Medication label capture guideline">
+        <div id="guideFrame" class="guide-frame">
+          <div class="guide-header-label">ส่วนหัวฉลาก</div>
+          <div class="guide-divider"></div>
+          <div class="guide-body-label">ชื่อยาและวิธีใช้</div>
+        </div>
+      </section>
+
+      <section class="top-bar">
+        <h1>ถ่ายฉลากยา</h1>
+        <p>วางฉลากให้อยู่ในกรอบ และให้เส้นคั่นบนฉลากตรงกับเส้นกลางกรอบ</p>
+      </section>
+
+      <section id="previewPanel" class="preview-panel" hidden>
+        <img id="capturedPreview" alt="รูปฉลากยาที่ถ่ายแล้ว" />
+      </section>
+
+      <section class="controls">
+        <button id="captureButton" class="primary-button" type="button">ถ่ายรูป</button>
+        <button id="retakeButton" class="secondary-button" type="button" hidden>ถ่ายใหม่</button>
+        <button id="uploadButton" class="primary-button" type="button" hidden>ส่งรูป</button>
+        <p id="statusText" class="status-text" role="status"></p>
+      </section>
+    </main>
+
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <script src="/static/liff-camera/app.js"></script>
+  </body>
+</html>

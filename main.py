@@ -1,4 +1,6 @@
 from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError, LineBotApiError
 from linebot.models import (
@@ -36,6 +38,14 @@ from urllib.parse import parse_qsl
 from datetime import datetime
 import pytz
 import logging
+from pathlib import Path
+from uuid import uuid4
+
+STANDARD_LABEL_WIDTH = 1344
+STANDARD_LABEL_HEIGHT = 1000
+PDPA_MASK_RATIO = 0.25
+PDPA_MASK_HEIGHT = int(STANDARD_LABEL_HEIGHT * PDPA_MASK_RATIO)
+MIN_LABEL_AREA_RATIO = 0.08
 
 
 # ==========================================
@@ -101,8 +111,9 @@ def check_image_quality(file_path):
         
         print(f"🔍 [TEST] ค่าพื้นที่วัตถุ: {object_area}, ค่าพื้นที่ภาพรวม: {total_area}, สัดส่วน: {object_area/total_area:.3f}")
         
-        #if (object_area / total_area) < 0.15: # ปรับลดเกณฑ์ลงนิดหน่อยเหลือ 15% 
-            #return False, "⚠️ รูปภาพอยู่ไกลเกินไป กรุณาถ่ายใกล้ๆ ให้ฉลากยาเต็มกรอบภาพครับ"
+        object_area_ratio = object_area / total_area
+        if object_area_ratio < MIN_LABEL_AREA_RATIO:
+            return False, "⚠️ รูปภาพอยู่ไกลเกินไป กรุณาถ่ายใกล้ๆ ให้ฉลากยาเต็มกรอบภาพครับ"
 
     # 6. Auto-Deskew (แก้เอียงอัตโนมัติ 1-15 องศา)
     coords = np.column_stack(np.where(edges > 0))
@@ -197,6 +208,452 @@ def normalize_label_image_for_ai(input_path: str, output_path: str) -> tuple[boo
     return True, "OK"
 
 
+def _order_quad_points(points: np.ndarray) -> np.ndarray:
+    points = points.reshape(4, 2).astype(np.float32)
+    ordered = np.zeros((4, 2), dtype=np.float32)
+    point_sum = points.sum(axis=1)
+    point_diff = np.diff(points, axis=1).reshape(-1)
+    ordered[0] = points[np.argmin(point_sum)]
+    ordered[2] = points[np.argmax(point_sum)]
+    ordered[1] = points[np.argmin(point_diff)]
+    ordered[3] = points[np.argmax(point_diff)]
+    return ordered
+
+
+def _rotate_image_bound(image: np.ndarray, angle_degrees: float) -> np.ndarray:
+    if abs(angle_degrees) < 0.3:
+        return image.copy()
+
+    height, width = image.shape[:2]
+    center = (width / 2.0, height / 2.0)
+    matrix = cv2.getRotationMatrix2D(center, angle_degrees, 1.0)
+    cos = abs(matrix[0, 0])
+    sin = abs(matrix[0, 1])
+    new_width = int((height * sin) + (width * cos))
+    new_height = int((height * cos) + (width * sin))
+    matrix[0, 2] += (new_width / 2.0) - center[0]
+    matrix[1, 2] += (new_height / 2.0) - center[1]
+    return cv2.warpAffine(
+        image,
+        matrix,
+        (new_width, new_height),
+        flags=cv2.INTER_CUBIC,
+        borderMode=cv2.BORDER_REPLICATE,
+    )
+
+
+def _estimate_horizontal_skew_angle(image: np.ndarray) -> float | None:
+    height, width = image.shape[:2]
+    if height < 1 or width < 1:
+        return None
+
+    scale = min(1.0, 1200.0 / max(width, height))
+    detection = image
+    if scale < 1.0:
+        detection = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+
+    gray = cv2.cvtColor(detection, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 40, 130)
+    detect_height, detect_width = gray.shape[:2]
+    lines = cv2.HoughLinesP(
+        edges,
+        rho=1,
+        theta=np.pi / 180,
+        threshold=max(45, int(detect_width * 0.04)),
+        minLineLength=max(120, int(detect_width * 0.18)),
+        maxLineGap=max(14, int(detect_width * 0.025)),
+    )
+    if lines is None:
+        return None
+
+    candidates = []
+    for x1, y1, x2, y2 in lines[:, 0]:
+        dx = x2 - x1
+        dy = y2 - y1
+        if dx == 0:
+            continue
+        length = float(np.hypot(dx, dy))
+        angle = float(np.degrees(np.arctan2(dy, dx)))
+        if abs(angle) <= 15.0 and length >= detect_width * 0.18:
+            candidates.append((angle, length))
+
+    if not candidates:
+        return None
+
+    angles = np.array([angle for angle, _ in candidates], dtype=np.float32)
+    weights = np.array([weight for _, weight in candidates], dtype=np.float32)
+    median_angle = float(np.median(angles))
+    inliers = np.abs(angles - median_angle) <= 4.0
+    if np.any(inliers):
+        angles = angles[inliers]
+        weights = weights[inliers]
+    return float(np.average(angles, weights=weights))
+
+
+def _find_label_quad(image: np.ndarray) -> np.ndarray | None:
+    height, width = image.shape[:2]
+    if height < 1 or width < 1:
+        return None
+
+    scale = min(1.0, 1100.0 / max(width, height))
+    detection = image
+    if scale < 1.0:
+        detection = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+
+    detect_height, detect_width = detection.shape[:2]
+    gray = cv2.cvtColor(detection, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 35, 120)
+    edges = cv2.dilate(edges, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)), iterations=1)
+    edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (19, 19)))
+
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    total_area = detect_height * detect_width
+    best_quad = None
+    best_score = 0.0
+
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        area_ratio = area / max(total_area, 1)
+        if not 0.08 <= area_ratio <= 0.88:
+            continue
+
+        perimeter = cv2.arcLength(contour, True)
+        approx = cv2.approxPolyDP(contour, 0.025 * perimeter, True)
+        if len(approx) == 4 and cv2.isContourConvex(approx):
+            quad = approx.reshape(4, 2).astype(np.float32)
+        else:
+            rect = cv2.minAreaRect(contour)
+            quad = cv2.boxPoints(rect).astype(np.float32)
+
+        x, y, box_w, box_h = cv2.boundingRect(quad.astype(np.int32))
+        if box_w < detect_width * 0.25 or box_h < detect_height * 0.15:
+            continue
+        if x <= 2 and y <= 2 and x + box_w >= detect_width - 2 and y + box_h >= detect_height - 2:
+            continue
+
+        ordered = _order_quad_points(quad)
+        top_width = np.linalg.norm(ordered[1] - ordered[0])
+        bottom_width = np.linalg.norm(ordered[2] - ordered[3])
+        left_height = np.linalg.norm(ordered[3] - ordered[0])
+        right_height = np.linalg.norm(ordered[2] - ordered[1])
+        rect_width = max(top_width, bottom_width)
+        rect_height = max(left_height, right_height)
+        aspect_ratio = rect_width / max(rect_height, 1.0)
+        if not 0.75 <= aspect_ratio <= 3.2:
+            continue
+
+        rect_area = rect_width * rect_height
+        rectangularity = area / max(rect_area, 1.0)
+        if rectangularity < 0.45:
+            continue
+
+        score = area_ratio * rectangularity * (1.0 + min(rect_width / max(detect_width, 1), 1.0))
+        if score > best_score:
+            best_score = score
+            best_quad = ordered
+
+    if best_quad is None:
+        return None
+
+    if scale < 1.0:
+        best_quad = best_quad / scale
+    return best_quad.astype(np.float32)
+
+
+def _warp_label_quad(image: np.ndarray, quad: np.ndarray) -> np.ndarray | None:
+    ordered = _order_quad_points(quad)
+    width_a = np.linalg.norm(ordered[2] - ordered[3])
+    width_b = np.linalg.norm(ordered[1] - ordered[0])
+    height_a = np.linalg.norm(ordered[1] - ordered[2])
+    height_b = np.linalg.norm(ordered[0] - ordered[3])
+    output_width = int(max(width_a, width_b))
+    output_height = int(max(height_a, height_b))
+    if output_width < 300 or output_height < 160:
+        return None
+
+    destination = np.array(
+        [
+            [0, 0],
+            [output_width - 1, 0],
+            [output_width - 1, output_height - 1],
+            [0, output_height - 1],
+        ],
+        dtype=np.float32,
+    )
+    matrix = cv2.getPerspectiveTransform(ordered, destination)
+    return cv2.warpPerspective(image, matrix, (output_width, output_height), borderMode=cv2.BORDER_REPLICATE)
+
+
+def detect_label_roi_bounds(image: np.ndarray) -> tuple[int, int, int, int] | None:
+    if image is None:
+        return None
+
+    height, width = image.shape[:2]
+    if height < 1 or width < 1:
+        return None
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (3, 3), 0)
+    _, otsu_mask = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    adaptive_mask = cv2.adaptiveThreshold(
+        gray,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY_INV,
+        31,
+        11,
+    )
+    dark_mask = cv2.bitwise_or(otsu_mask, adaptive_mask)
+
+    component_count, labels, stats, _ = cv2.connectedComponentsWithStats(dark_mask, connectivity=8)
+    text_like_mask = np.zeros((height, width), dtype=np.uint8)
+    total_area = height * width
+    min_area = max(8, int(total_area * 0.000004))
+    max_area = max(100, int(total_area * 0.035))
+
+    for index in range(1, component_count):
+        x, y, w, h, area = stats[index]
+        if area < min_area or area > max_area:
+            continue
+        if w < 2 or h < 2:
+            continue
+        if h > height * 0.22 and w > width * 0.22:
+            continue
+        fill_ratio = area / max(w * h, 1)
+        if fill_ratio < 0.015:
+            continue
+        text_like_mask[labels == index] = 255
+
+    if np.count_nonzero(text_like_mask) < max(30, int(total_area * 0.00003)):
+        return None
+
+    close_kernel = cv2.getStructuringElement(
+        cv2.MORPH_RECT,
+        (max(19, int(width * 0.018)), max(7, int(height * 0.008))),
+    )
+    merged = cv2.dilate(text_like_mask, close_kernel, iterations=1)
+    contours, _ = cv2.findContours(merged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+
+    candidates = []
+    for contour in contours:
+        x, y, w, h = cv2.boundingRect(contour)
+        area_ratio = (w * h) / total_area
+        if area_ratio < 0.015:
+            continue
+        if w < width * 0.12 or h < height * 0.08:
+            continue
+        component_score = np.count_nonzero(text_like_mask[y:y + h, x:x + w])
+        candidates.append((x, y, w, h, component_score * (1.0 + area_ratio)))
+
+    if not candidates:
+        ys, xs = np.where(text_like_mask > 0)
+        if ys.size == 0:
+            return None
+        x0 = int(np.percentile(xs, 1))
+        x1 = int(np.percentile(xs, 99))
+        y0 = int(np.percentile(ys, 1))
+        y1 = int(np.percentile(ys, 99))
+    else:
+        x, y, w, h, _ = max(candidates, key=lambda item: item[4])
+        roi_mask = text_like_mask[y:y + h, x:x + w]
+        ys, xs = np.where(roi_mask > 0)
+        if ys.size == 0:
+            return None
+        x0 = x + int(np.percentile(xs, 1))
+        x1 = x + int(np.percentile(xs, 99))
+        y0 = y + int(np.percentile(ys, 1))
+        y1 = y + int(np.percentile(ys, 99))
+
+    text_width = max(1, x1 - x0)
+    text_height = max(1, y1 - y0)
+    pad_left = max(int(text_width * 0.08), int(width * 0.015), 12)
+    pad_right = max(int(text_width * 0.06), int(width * 0.015), 12)
+    pad_top = max(int(text_height * 0.06), int(height * 0.015), 10)
+    pad_bottom = max(int(text_height * 0.08), int(height * 0.02), 14)
+
+    crop_x0 = max(0, x0 - pad_left)
+    crop_y0 = max(0, y0 - pad_top)
+    crop_x1 = min(width, x1 + pad_right)
+    crop_y1 = min(height, y1 + pad_bottom)
+
+    crop_width = crop_x1 - crop_x0
+    crop_height = crop_y1 - crop_y0
+    if crop_width < 120 or crop_height < 90:
+        return None
+    if (crop_width * crop_height) / total_area < MIN_LABEL_AREA_RATIO:
+        return None
+
+    return crop_x0, crop_y0, crop_width, crop_height
+
+
+def _standardize_label_crop(crop: np.ndarray) -> np.ndarray:
+    return cv2.resize(
+        crop,
+        (STANDARD_LABEL_WIDTH, STANDARD_LABEL_HEIGHT),
+        interpolation=cv2.INTER_AREA if crop.shape[1] > STANDARD_LABEL_WIDTH else cv2.INTER_CUBIC,
+    )
+
+
+def _find_upper_divider_y_on_standard_label(image: np.ndarray) -> int | None:
+    if image is None:
+        return None
+
+    height, width = image.shape[:2]
+    if height < 1 or width < 1:
+        return None
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 50, 150)
+    lines = cv2.HoughLinesP(
+        edges,
+        1,
+        np.pi / 180,
+        threshold=75,
+        minLineLength=max(180, int(width * 0.35)),
+        maxLineGap=max(16, int(width * 0.035)),
+    )
+    if lines is None:
+        return None
+
+    candidates = []
+    min_y = int(height * 0.10)
+    max_y = int(height * 0.42)
+    for x1, y1, x2, y2 in lines[:, 0]:
+        dx = x2 - x1
+        dy = y2 - y1
+        if dx == 0:
+            continue
+
+        length = float(np.hypot(dx, dy))
+        angle = float(np.degrees(np.arctan2(dy, dx)))
+        y_mid = int(round((y1 + y2) / 2))
+        if abs(angle) > 7.0:
+            continue
+        if y_mid < min_y or y_mid > max_y:
+            continue
+        if length < width * 0.35:
+            continue
+
+        candidates.append((y_mid, length))
+
+    if not candidates:
+        return None
+
+    groups = []
+    for y_mid, length in sorted(candidates, key=lambda item: item[0]):
+        if not groups or y_mid > groups[-1]["end"] + 10:
+            groups.append({"start": y_mid, "end": y_mid, "weight": length, "weighted_y": y_mid * length})
+            continue
+
+        groups[-1]["end"] = max(groups[-1]["end"], y_mid)
+        groups[-1]["weight"] += length
+        groups[-1]["weighted_y"] += y_mid * length
+
+    strong_groups = [group for group in groups if group["weight"] >= width * 0.45]
+    selected_groups = strong_groups or groups
+    selected = max(selected_groups, key=lambda group: group["end"])
+    return int(round(selected["weighted_y"] / max(selected["weight"], 1.0)))
+
+
+def _align_roi_divider_to_mask_band(image: np.ndarray, bounds: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+    x, y, w, h = bounds
+    height = image.shape[0]
+    if h < 1 or height < 1:
+        return bounds
+
+    crop = image[y:y + h, x:x + w]
+    if crop.size == 0:
+        return bounds
+
+    standardized = _standardize_label_crop(crop)
+    divider_y = _find_upper_divider_y_on_standard_label(standardized)
+    if divider_y is None:
+        return bounds
+
+    tolerance = max(18, int(STANDARD_LABEL_HEIGHT * 0.025))
+    divider_target_y = max(1, PDPA_MASK_HEIGHT - 20)
+    shift_on_standard = divider_y - divider_target_y
+    if abs(shift_on_standard) <= tolerance:
+        return bounds
+
+    shift_in_source = int(round((shift_on_standard / STANDARD_LABEL_HEIGHT) * h))
+    new_y = max(0, min(y + shift_in_source, height - h))
+    return x, new_y, w, h
+
+
+def _extend_pdpa_mask_bottom_for_header_tail(image: np.ndarray, mask_bottom: int) -> int:
+    height, width = image.shape[:2]
+    if height < 1 or width < 1:
+        return mask_bottom
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    dark_mask = (gray < 80).astype(np.uint8) * 255
+    close_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(45, int(width * 0.04)), 1))
+    closed = cv2.morphologyEx(dark_mask, cv2.MORPH_CLOSE, close_kernel)
+    row_density = np.mean(closed > 0, axis=1)
+
+    scan_start = max(0, mask_bottom - 8)
+    scan_end = min(height, mask_bottom + max(85, int(height * 0.09)))
+    active_rows = np.where(row_density[scan_start:scan_end] > 0.23)[0] + scan_start
+    if active_rows.size == 0:
+        return mask_bottom
+
+    groups = []
+    start = previous = int(active_rows[0])
+    for row in active_rows[1:]:
+        row = int(row)
+        if row <= previous + 3:
+            previous = row
+            continue
+
+        groups.append((start, previous))
+        start = previous = row
+    groups.append((start, previous))
+
+    extended_bottom = mask_bottom
+    first_group_window = max(35, int(height * 0.04))
+    followup_gap = max(10, int(height * 0.012))
+    safety_padding = max(10, int(height * 0.012))
+    cap = min(height, max(mask_bottom, int(height * 0.32)))
+
+    for start, end in groups:
+        if end < extended_bottom:
+            continue
+        if start <= extended_bottom + (first_group_window if extended_bottom == mask_bottom else followup_gap):
+            extended_bottom = min(cap, end + safety_padding)
+            continue
+        break
+
+    return max(mask_bottom, extended_bottom)
+
+
+def rectify_label_image_for_ai(input_path: str, output_path: str) -> tuple[bool, str]:
+    image = cv2.imread(input_path)
+    if image is None:
+        return False, "image_read_error"
+
+    angle = _estimate_horizontal_skew_angle(image)
+    rectified = image
+    if angle is not None and 0.8 <= abs(angle) <= 15.0:
+        rectified = _rotate_image_bound(image, angle)
+
+    roi_bounds = detect_label_roi_bounds(rectified)
+    if roi_bounds is None:
+        return False, "label_roi_not_found"
+
+    roi_bounds = _align_roi_divider_to_mask_band(rectified, roi_bounds)
+    x, y, w, h = roi_bounds
+    label_crop = rectified[y:y + h, x:x + w]
+    if label_crop.size == 0:
+        return False, "empty_label_crop"
+
+    standardized = _standardize_label_crop(label_crop)
+    cv2.imwrite(output_path, standardized)
+    return True, "OK"
+
+
 def find_pdpa_divider_y(image) -> int | None:
     if image is None:
         return None
@@ -235,6 +692,78 @@ def find_pdpa_divider_y(image) -> int | None:
             candidates.append((x, y, w, h))
 
     if not candidates:
+        edges = cv2.Canny(blur, 35, 110)
+        hough_lines = cv2.HoughLinesP(
+            edges,
+            rho=1,
+            theta=np.pi / 180,
+            threshold=max(40, int(detect_width * 0.04)),
+            minLineLength=max(120, int(detect_width * 0.28)),
+            maxLineGap=max(12, int(detect_width * 0.035)),
+        )
+        hough_candidates = []
+        if hough_lines is not None:
+            for line in hough_lines[:, 0]:
+                x1, y1, x2, y2 = [int(value) for value in line]
+                dx = x2 - x1
+                dy = y2 - y1
+                length = float(np.hypot(dx, dy))
+                if length < detect_width * 0.28:
+                    continue
+
+                angle = abs(np.degrees(np.arctan2(dy, dx)))
+                angle = min(angle, abs(180.0 - angle))
+                y_mid = (y1 + y2) / 2.0
+                is_header_divider_zone = detect_height * 0.18 <= y_mid <= detect_height * 0.58
+                if angle <= 8.0 and is_header_divider_zone:
+                    left = min(x1, x2)
+                    right = max(x1, x2)
+                    hough_candidates.append((left, right, max(y1, y2), y_mid, length))
+
+        if hough_candidates:
+            grouped_candidates = []
+            row_tolerance = max(10, int(detect_height * 0.02))
+            for candidate in sorted(hough_candidates, key=lambda item: item[3]):
+                left, right, line_bottom, y_mid, length = candidate
+                if grouped_candidates and abs(grouped_candidates[-1]["y_mid"] - y_mid) <= row_tolerance:
+                    group = grouped_candidates[-1]
+                    group["intervals"].append((left, right))
+                    group["line_bottom"] = max(group["line_bottom"], line_bottom)
+                    group["y_mid"] = (group["y_mid"] * group["count"] + y_mid) / (group["count"] + 1)
+                    group["count"] += 1
+                    group["length"] += length
+                else:
+                    grouped_candidates.append(
+                        {
+                            "intervals": [(left, right)],
+                            "line_bottom": line_bottom,
+                            "y_mid": y_mid,
+                            "count": 1,
+                            "length": length,
+                        }
+                    )
+
+            wide_line_groups = []
+            for group in grouped_candidates:
+                intervals = sorted(group["intervals"])
+                merged = []
+                for left, right in intervals:
+                    if not merged or left > merged[-1][1] + max(8, int(detect_width * 0.02)):
+                        merged.append([left, right])
+                    else:
+                        merged[-1][1] = max(merged[-1][1], right)
+
+                coverage = sum(right - left for left, right in merged)
+                if coverage >= detect_width * 0.38:
+                    wide_line_groups.append((group["y_mid"], group["line_bottom"], coverage, group["length"]))
+
+            if wide_line_groups:
+                _, line_bottom, _, _ = min(
+                    wide_line_groups,
+                    key=lambda item: (item[0], -item[2], -item[3]),
+                )
+                return int(line_bottom / scale)
+
         projection_sources = [
             np.mean(thresh > 0, axis=1),
             np.mean(cv2.Canny(blur, 30, 100) > 0, axis=1),
@@ -275,28 +804,126 @@ def find_label_bounds(image) -> tuple[int, int, int, int] | None:
         return None
 
     height, width = image.shape[:2]
+    if height < 1 or width < 1:
+        return None
+
+    candidates = []
+    total_area = height * width
+    edge_map = cv2.Canny(cv2.GaussianBlur(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), (5, 5), 0), 50, 150)
+
+    def collect_candidates(mask):
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (31, 31))
+        closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        opened = cv2.morphologyEx(closed, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9)))
+        contours, _ = cv2.findContours(opened, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        for contour in contours:
+            x, y, w, h = cv2.boundingRect(contour)
+            area_ratio = (w * h) / total_area
+            aspect_ratio = w / max(h, 1)
+            has_margin = w < width * 0.96 and h < height * 0.96
+            is_label_sized = w >= width * 0.25 and h >= height * 0.12
+            if 0.08 <= area_ratio <= 0.85 and 0.55 <= aspect_ratio <= 3.4 and has_margin and is_label_sized:
+                pad_x = max(4, int(w * 0.02))
+                pad_y = max(4, int(h * 0.02))
+                x0 = max(0, x - pad_x)
+                y0 = max(0, y - pad_y)
+                x1 = min(width, x + w + pad_x)
+                y1 = min(height, y + h + pad_y)
+                edge_density = float(np.mean(edge_map[y:y + h, x:x + w] > 0))
+                score = (x1 - x0) * (y1 - y0) * (1.0 + edge_density * 120.0)
+                candidates.append((x0, y0, x1 - x0, y1 - y0, score))
+
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
     _, bright = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    collect_candidates(bright)
 
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
-    closed = cv2.morphologyEx(bright, cv2.MORPH_CLOSE, kernel)
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    saturation = hsv[:, :, 1]
+    value = hsv[:, :, 2]
+    low_saturation_bright = np.where((saturation < 85) & (value > 135), 255, 0).astype(np.uint8)
+    collect_candidates(low_saturation_bright)
 
-    contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    candidates = []
-    total_area = height * width
-    for contour in contours:
-        x, y, w, h = cv2.boundingRect(contour)
-        area_ratio = (w * h) / total_area
-        aspect_ratio = w / max(h, 1)
-        has_margin = w < width * 0.95 and h < height * 0.95
-        if 0.12 <= area_ratio <= 0.85 and 0.7 <= aspect_ratio <= 2.8 and has_margin:
-            candidates.append((x, y, w, h))
+    for kernel_size in ((61, 31), (91, 41)):
+        closed_edges = cv2.morphologyEx(
+            edge_map,
+            cv2.MORPH_CLOSE,
+            cv2.getStructuringElement(cv2.MORPH_RECT, kernel_size),
+        )
+        edge_blocks = cv2.dilate(
+            closed_edges,
+            cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9)),
+            iterations=1,
+        )
+        collect_candidates(edge_blocks)
 
     if not candidates:
         return None
 
-    return max(candidates, key=lambda item: item[2] * item[3])
+    x, y, w, h, _ = max(candidates, key=lambda item: item[4])
+    return x, y, w, h
+
+
+def find_first_large_text_y(
+    image,
+    min_y: int,
+    max_y: int | None = None,
+    x_bounds: tuple[int, int] | None = None,
+    min_dark_density: float = 0.23,
+) -> int | None:
+    if image is None:
+        return None
+
+    height, width = image.shape[:2]
+    if height < 1 or width < 1:
+        return None
+
+    y0 = max(0, min(int(min_y), height - 1))
+    y1 = height if max_y is None else max(y0 + 1, min(int(max_y), height))
+    if x_bounds is None:
+        x0 = int(width * 0.15)
+        x1 = int(width * 0.85)
+    else:
+        left, right = x_bounds
+        box_width = max(1, right - left)
+        x0 = max(0, min(width - 1, left + int(box_width * 0.06)))
+        x1 = max(x0 + 1, min(width, right - int(box_width * 0.06)))
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    dark_pixels = gray[y0:y1, x0:x1] < 90
+    if dark_pixels.size == 0:
+        return None
+
+    row_score = np.mean(dark_pixels, axis=1)
+    active_rows = np.where(row_score > 0.06)[0]
+    if active_rows.size == 0:
+        return None
+
+    groups = []
+    start = int(active_rows[0])
+    previous = int(active_rows[0])
+    for row in active_rows[1:]:
+        row = int(row)
+        if row <= previous + 3:
+            previous = row
+            continue
+
+        groups.append((start, previous))
+        start = previous = row
+    groups.append((start, previous))
+
+    for start, end in groups:
+        group_scores = row_score[start:end + 1]
+        group_height = end - start + 1
+        is_large_text = group_height >= max(18, int(height * 0.012))
+        max_dark_density = float(np.max(group_scores))
+        is_overmerged_region = group_height > max(130, int((y1 - y0) * 0.24)) and max_dark_density > 0.55
+        is_dense = max_dark_density >= min_dark_density
+        if is_large_text and is_dense and not is_overmerged_region:
+            return y0 + start
+
+    return None
 
 
 def create_pdpa_safe_image(input_path: str, output_path: str) -> tuple[bool, str]:
@@ -304,25 +931,14 @@ def create_pdpa_safe_image(input_path: str, output_path: str) -> tuple[bool, str
     if image is None:
         return False, "image_read_error"
 
-    divider_y = find_pdpa_divider_y(image)
     height = image.shape[0]
+    if image.size == 0 or height < 1:
+        return False, "empty_safe_image"
 
-    if divider_y is not None:
-        mask_bottom = divider_y + max(6, int(height * 0.01))
-    else:
-        label_bounds = find_label_bounds(image)
-        if label_bounds is not None:
-            _, label_y, _, label_h = label_bounds
-            mask_bottom = label_y + int(label_h * 0.28)
-        else:
-            mask_bottom = int(height * 0.50)
-
-    mask_bottom = max(1, min(mask_bottom, int(height * 0.65)))
+    mask_bottom = max(1, min(int(height * PDPA_MASK_RATIO), height))
+    mask_bottom = _extend_pdpa_mask_bottom_for_header_tail(image, mask_bottom)
     safe_image = image.copy()
     safe_image[:mask_bottom, :] = (0, 0, 0)
-
-    if safe_image.size == 0:
-        return False, "empty_safe_image"
 
     cv2.imwrite(output_path, safe_image)
     return True, "OK"
@@ -341,6 +957,17 @@ logging.getLogger("uvicorn.access").addFilter(EndpointFilter())
 # 2. การตั้งค่าเซิร์ฟเวอร์, LINE Bot และ Gemini API
 # ==========================================
 app = FastAPI()
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+LIFF_CAMERA_DIR = PROJECT_ROOT / "static" / "liff-camera"
+LIFF_UPLOAD_ALLOWED_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/png": ".png",
+}
+
+if LIFF_CAMERA_DIR.exists():
+    app.mount("/static/liff-camera", StaticFiles(directory=str(LIFF_CAMERA_DIR)), name="liff-camera-static")
 
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN', 'YOUR_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET', 'YOUR_SECRET')
@@ -913,6 +1540,61 @@ def build_language_picker(lang: str = DEFAULT_LANGUAGE) -> dict:
 def root():
     return {"message": "Banya Sookjai AI Server is running!"}
 
+
+@app.get("/liff/camera")
+def liff_camera_page():
+    camera_page = LIFF_CAMERA_DIR / "index.html"
+    if not camera_page.exists():
+        raise HTTPException(status_code=404, detail="LIFF camera page is not available")
+    return FileResponse(str(camera_page), media_type="text/html; charset=utf-8")
+
+
+@app.get("/liff/config")
+def liff_config():
+    return {"liff_id": os.environ.get("LIFF_ID", "")}
+
+
+@app.post("/liff/upload-label")
+async def upload_liff_label_image(request: Request):
+    content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    extension = LIFF_UPLOAD_ALLOWED_TYPES.get(content_type)
+    if extension is None:
+        raise HTTPException(status_code=400, detail="Only JPEG or PNG images are allowed")
+
+    image_bytes = await request.body()
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="Image body is empty")
+
+    upload_dir = Path(os.environ.get("LIFF_UPLOAD_DEBUG_DIR", "/tmp/liff_uploads"))
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"liff_label_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{uuid4().hex[:8]}{extension}"
+    output_path = upload_dir / filename
+    output_path.write_bytes(image_bytes)
+    line_user_id = request.headers.get("x-line-user-id", "").strip()
+    metadata_path = output_path.with_suffix(".json")
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "filename": filename,
+                "content_type": content_type,
+                "size_bytes": len(image_bytes),
+                "line_user_id": line_user_id,
+                "created_at_utc": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    return {
+        "status": "ok",
+        "filename": filename,
+        "size_bytes": len(image_bytes),
+        "line_user_id": line_user_id,
+    }
+
+
 @app.get("/cron/check-reminder")
 def check_reminder():
     if not supabase:
@@ -1183,12 +1865,22 @@ def handle_image(event):
                 os.remove(path)
         return
 
+    rectified_file_path = f"/tmp/{event.message.id}_rectified.jpg"
+    rectify_ok, rectify_message = rectify_label_image_for_ai(normalized_file_path, rectified_file_path)
+    if not rectify_ok:
+        print(f"Image rectification failed for {event.message.id}: {rectify_message}")
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=t(user_language, "generic_processing_error")))
+        for path in (temp_file_path, normalized_file_path, rectified_file_path):
+            if os.path.exists(path):
+                os.remove(path)
+        return
+
     safe_file_path = f"/tmp/{event.message.id}_safe.jpg"
-    pdpa_ok, pdpa_message = create_pdpa_safe_image(normalized_file_path, safe_file_path)
+    pdpa_ok, pdpa_message = create_pdpa_safe_image(rectified_file_path, safe_file_path)
     if not pdpa_ok:
         print(f"⚠️ PDPA masking failed for {event.message.id}: {pdpa_message}")
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=t(user_language, "pdpa_masking_failed")))
-        for path in (temp_file_path, normalized_file_path, safe_file_path):
+        for path in (temp_file_path, normalized_file_path, rectified_file_path, safe_file_path):
             if os.path.exists(path):
                 os.remove(path)
         return
@@ -1200,7 +1892,7 @@ def handle_image(event):
         image_bytes = image_file.read()
 
     # ลบไฟล์ชั่วคราวทิ้งหลังอ่านเสร็จ
-    for path in (temp_file_path, normalized_file_path, safe_file_path):
+    for path in (temp_file_path, normalized_file_path, rectified_file_path, safe_file_path):
         if os.path.exists(path):
             os.remove(path)
 
