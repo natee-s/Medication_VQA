@@ -14,7 +14,7 @@
       <section id="processingOverlay" class="processing-overlay" hidden aria-live="polite" aria-busy="true">
         <div class="processing-card">
           <div class="processing-spinner" aria-hidden="true"></div>
-          <p id="processingText">กำลังประมวลผล...</p>
+          <p id="processingText" data-i18n="processing">กำลังประมวลผล...</p>
         </div>
       </section>
 
@@ -25,26 +25,26 @@
 
       <section class="guide-panel" aria-label="Medication label capture guideline">
         <div id="guideFrame" class="guide-frame">
-          <div class="guide-header-label">ส่วนหัวฉลาก</div>
+          <div id="guideHeaderLabel" class="guide-header-label" data-i18n="guide_header">ส่วนหัวฉลาก</div>
           <div class="guide-divider"></div>
-          <div class="guide-body-label">ชื่อยาและวิธีใช้</div>
+          <div id="guideBodyLabel" class="guide-body-label" data-i18n="guide_body">ชื่อยาและวิธีใช้</div>
         </div>
       </section>
 
       <section class="top-bar">
-        <h1>ถ่ายฉลากยา</h1>
-        <p>วางฉลากให้อยู่ในกรอบ และให้เส้นคั่นบนฉลากตรงกับเส้นกลางกรอบ</p>
+        <h1 id="pageTitle" data-i18n="title">ถ่ายฉลากยา</h1>
+        <p id="pageSubtitle" data-i18n="subtitle">วางฉลากให้อยู่ในกรอบ และให้เส้นคั่นบนฉลากตรงกับเส้นกลางกรอบ</p>
       </section>
 
       <section id="previewPanel" class="preview-panel" hidden>
-        <p id="previewInstruction" class="preview-instruction">ตรวจรูปก่อนส่ง ถ้าไม่ชัดให้กดถ่ายใหม่</p>
-        <img id="capturedPreview" alt="รูปฉลากยาที่ถ่ายแล้ว" />
+        <p id="previewInstruction" class="preview-instruction" data-i18n="preview_instruction">ตรวจรูปก่อนส่ง ถ้าไม่ชัดให้กดถ่ายใหม่</p>
+        <img id="capturedPreview" alt="รูปฉลากยาที่ถ่ายแล้ว" data-i18n-alt="preview_alt" />
       </section>
 
       <section class="controls">
-        <button id="captureButton" class="primary-button" type="button">ถ่ายรูป</button>
-        <button id="retakeButton" class="secondary-button" type="button" hidden>ถ่ายใหม่</button>
-        <button id="uploadButton" class="primary-button" type="button" hidden>ส่งรูป</button>
+        <button id="captureButton" class="primary-button" type="button" data-i18n="capture_button">ถ่ายรูป</button>
+        <button id="retakeButton" class="secondary-button" type="button" hidden data-i18n="retake_button">ถ่ายใหม่</button>
+        <button id="uploadButton" class="primary-button" type="button" hidden data-i18n="upload_button">ส่งรูป</button>
         <p id="statusText" class="status-text" role="status"></p>
       </section>
     </main>

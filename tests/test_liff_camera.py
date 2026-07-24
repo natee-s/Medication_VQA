@@ -75,7 +75,7 @@ class LiffCameraTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("captureButton.disabled = true;", script)
         self.assertIn("retakeButton.disabled = false;", script)
         self.assertIn("result.processing_queued", script)
-        self.assertIn("กลับไปที่แชท LINE เพื่อรอผลลัพธ์", script)
+        self.assertIn('setStatusKey("status_upload_success")', script)
 
     async def test_liff_camera_page_has_processing_overlay_and_preview_instruction(self):
         import main
@@ -96,8 +96,10 @@ class LiffCameraTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(".camera-shell.preview-mode .preview-panel", css_response.text)
         self.assertIn(".camera-shell.preview-mode .controls", css_response.text)
         self.assertIn("setProcessingMode", script_response.text)
+        self.assertIn("loadLiffMessages", script_response.text)
+        self.assertIn("applyTranslations", script_response.text)
         self.assertIn("cameraShell.classList.toggle", script_response.text)
-        self.assertIn("กำลังประมวลผล", script_response.text)
+        self.assertIn("status_camera_denied", script_response.text)
 
     async def test_liff_camera_js_closes_liff_window_after_successful_upload(self):
         import main
@@ -142,6 +144,32 @@ class LiffCameraTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["liff_id"], "1234567890-test")
+
+    async def test_liff_messages_returns_selected_language_copy(self):
+        import main
+
+        transport = httpx.ASGITransport(app=main.app)
+        with patch.object(main, "get_user_language", return_value="zh"):
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.get("/liff/messages?line_user_id=U123456789")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["language"], "zh")
+        self.assertEqual(body["messages"]["capture_button"], "拍照")
+        self.assertIn("status_upload_success", body["messages"])
+
+    async def test_liff_messages_falls_back_to_thai_without_line_user_id(self):
+        import main
+
+        transport = httpx.ASGITransport(app=main.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/liff/messages")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["language"], "th")
+        self.assertEqual(body["messages"]["capture_button"], "ถ่ายรูป")
 
     async def test_liff_upload_label_records_line_user_id_metadata(self):
         import main

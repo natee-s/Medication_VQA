@@ -1001,6 +1001,118 @@ LIFF_UPLOAD_ALLOWED_TYPES = {
     "image/jpg": ".jpg",
     "image/png": ".png",
 }
+LIFF_CAMERA_MESSAGES = {
+    "th": {
+        "document_title": "Medication Label Camera",
+        "processing": "กำลังประมวลผล...",
+        "guide_header": "ส่วนหัวฉลาก",
+        "guide_body": "ชื่อยาและวิธีใช้",
+        "title": "ถ่ายฉลากยา",
+        "subtitle": "วางฉลากให้อยู่ในกรอบ และให้เส้นคั่นบนฉลากตรงกับเส้นกลางกรอบ",
+        "preview_instruction": "ตรวจรูปก่อนส่ง ถ้าไม่ชัดให้กดถ่ายใหม่",
+        "preview_alt": "รูปฉลากยาที่ถ่ายแล้ว",
+        "capture_button": "ถ่ายรูป",
+        "retake_button": "ถ่ายใหม่",
+        "upload_button": "ส่งรูป",
+        "status_camera_unsupported": "อุปกรณ์นี้ไม่รองรับการเปิดกล้องผ่านเว็บ",
+        "status_align_label": "จัดฉลากให้อยู่ในกรอบ แล้วกดถ่ายรูป",
+        "status_camera_denied": "เปิดกล้องไม่ได้ กรุณาอนุญาตสิทธิ์กล้องแล้วลองใหม่",
+        "status_camera_not_ready": "กล้องยังไม่พร้อม กรุณารอสักครู่",
+        "status_create_failed": "สร้างรูปไม่สำเร็จ กรุณาถ่ายใหม่",
+        "status_no_image": "ยังไม่มีรูป กรุณาถ่ายรูปก่อน",
+        "status_upload_success": "ส่งรูปสำเร็จ กลับไปที่แชท LINE เพื่อรอผลลัพธ์",
+        "status_upload_unlinked": "ระบบได้รับรูปแล้ว แต่ยังไม่ได้เชื่อมกับบัญชี LINE",
+        "status_upload_failed": "ส่งรูปไม่สำเร็จ กรุณาลองใหม่",
+    },
+    "en": {
+        "document_title": "Medication Label Camera",
+        "processing": "Processing...",
+        "guide_header": "Label header",
+        "guide_body": "Medicine name and directions",
+        "title": "Capture Medicine Label",
+        "subtitle": "Place the label inside the frame and align the label divider with the guide line.",
+        "preview_instruction": "Check the photo before sending. Retake it if it is unclear.",
+        "preview_alt": "Captured medicine label photo",
+        "capture_button": "Take Photo",
+        "retake_button": "Retake",
+        "upload_button": "Send Photo",
+        "status_camera_unsupported": "This device does not support web camera access.",
+        "status_align_label": "Place the label inside the frame, then take a photo.",
+        "status_camera_denied": "Could not open the camera. Please allow camera access and try again.",
+        "status_camera_not_ready": "Camera is not ready yet. Please wait a moment.",
+        "status_create_failed": "Could not create the photo. Please retake it.",
+        "status_no_image": "No photo yet. Please take a photo first.",
+        "status_upload_success": "Photo sent. Return to LINE chat to wait for the result.",
+        "status_upload_unlinked": "The photo was received, but it is not linked to your LINE account yet.",
+        "status_upload_failed": "Could not send the photo. Please try again.",
+    },
+    "my": {
+        "document_title": "ဆေးတံဆိပ်ကင်မရာ",
+        "processing": "လုပ်ဆောင်နေသည်...",
+        "guide_header": "တံဆိပ်ခေါင်းပိုင်း",
+        "guide_body": "ဆေးအမည်နှင့် သုံးစွဲနည်း",
+        "title": "ဆေးတံဆိပ်ကို ဓာတ်ပုံရိုက်ပါ",
+        "subtitle": "တံဆိပ်ကို ဘောင်အတွင်းထားပြီး တံဆိပ်ပေါ်က ခွဲမျဉ်းကို ဘောင်အလယ်မျဉ်းနှင့် ညှိပါ။",
+        "preview_instruction": "မပို့ခင် ဓာတ်ပုံကို စစ်ဆေးပါ။ မရှင်းလင်းပါက ပြန်ရိုက်ပါ။",
+        "preview_alt": "ရိုက်ထားသော ဆေးတံဆိပ်ပုံ",
+        "capture_button": "ဓာတ်ပုံရိုက်ပါ",
+        "retake_button": "ပြန်ရိုက်ပါ",
+        "upload_button": "ပုံပို့ပါ",
+        "status_camera_unsupported": "ဤစက်တွင် ဝဘ်ကင်မရာ အသုံးပြု၍ မရပါ။",
+        "status_align_label": "တံဆိပ်ကို ဘောင်အတွင်းထားပြီး ဓာတ်ပုံရိုက်ပါ။",
+        "status_camera_denied": "ကင်မရာဖွင့်၍ မရပါ။ ကင်မရာခွင့်ပြုပြီး ထပ်မံကြိုးစားပါ။",
+        "status_camera_not_ready": "ကင်မရာ မပြင်ဆင်ရသေးပါ။ ခဏစောင့်ပါ။",
+        "status_create_failed": "ပုံဖန်တီး၍ မရပါ။ ပြန်ရိုက်ပါ။",
+        "status_no_image": "ဓာတ်ပုံမရှိသေးပါ။ ပထမဦးစွာ ဓာတ်ပုံရိုက်ပါ။",
+        "status_upload_success": "ပုံပို့ပြီးပါပြီ။ ရလဒ်ကို စောင့်ရန် LINE chat သို့ ပြန်သွားပါ။",
+        "status_upload_unlinked": "ပုံကို လက်ခံပြီးပါပြီ၊ သို့သော် LINE အကောင့်နှင့် မချိတ်ဆက်ရသေးပါ။",
+        "status_upload_failed": "ပုံပို့၍ မရပါ။ ထပ်မံကြိုးစားပါ။",
+    },
+    "lo": {
+        "document_title": "ກ້ອງຖ່າຍສະຫຼາກຢາ",
+        "processing": "ກຳລັງປະມວນຜົນ...",
+        "guide_header": "ສ່ວນຫົວສະຫຼາກ",
+        "guide_body": "ຊື່ຢາ ແລະ ວິທີໃຊ້",
+        "title": "ຖ່າຍສະຫຼາກຢາ",
+        "subtitle": "ວາງສະຫຼາກໃຫ້ຢູ່ໃນກອບ ແລະ ໃຫ້ເສັ້ນແບ່ງກົງກັບເສັ້ນກາງກອບ.",
+        "preview_instruction": "ກວດຮູບກ່ອນສົ່ງ ຖ້າບໍ່ຊັດໃຫ້ຖ່າຍໃໝ່.",
+        "preview_alt": "ຮູບສະຫຼາກຢາທີ່ຖ່າຍແລ້ວ",
+        "capture_button": "ຖ່າຍຮູບ",
+        "retake_button": "ຖ່າຍໃໝ່",
+        "upload_button": "ສົ່ງຮູບ",
+        "status_camera_unsupported": "ອຸປະກອນນີ້ບໍ່ຮອງຮັບການເປີດກ້ອງຜ່ານເວັບ.",
+        "status_align_label": "ຈັດສະຫຼາກໃຫ້ຢູ່ໃນກອບ ແລ້ວກົດຖ່າຍຮູບ.",
+        "status_camera_denied": "ເປີດກ້ອງບໍ່ໄດ້ ກະລຸນາອະນຸຍາດກ້ອງແລ້ວລອງໃໝ່.",
+        "status_camera_not_ready": "ກ້ອງຍັງບໍ່ພ້ອມ ກະລຸນາລໍຖ້າສັກຄູ່.",
+        "status_create_failed": "ສ້າງຮູບບໍ່ສຳເລັດ ກະລຸນາຖ່າຍໃໝ່.",
+        "status_no_image": "ຍັງບໍ່ມີຮູບ ກະລຸນາຖ່າຍຮູບກ່ອນ.",
+        "status_upload_success": "ສົ່ງຮູບສຳເລັດ ກັບໄປທີ່ LINE chat ເພື່ອລໍຖ້າຜົນ.",
+        "status_upload_unlinked": "ລະບົບໄດ້ຮັບຮູບແລ້ວ ແຕ່ຍັງບໍ່ໄດ້ເຊື່ອມກັບບັນຊີ LINE.",
+        "status_upload_failed": "ສົ່ງຮູບບໍ່ສຳເລັດ ກະລຸນາລອງໃໝ່.",
+    },
+    "zh": {
+        "document_title": "药品标签相机",
+        "processing": "处理中...",
+        "guide_header": "标签顶部",
+        "guide_body": "药名和用法",
+        "title": "拍摄药品标签",
+        "subtitle": "请将标签放入框内，并让标签分隔线对齐框中的引导线。",
+        "preview_instruction": "发送前请检查照片；如果不清楚，请重新拍摄。",
+        "preview_alt": "已拍摄的药品标签照片",
+        "capture_button": "拍照",
+        "retake_button": "重拍",
+        "upload_button": "发送照片",
+        "status_camera_unsupported": "此设备不支持通过网页打开相机。",
+        "status_align_label": "请将标签放入框内，然后拍照。",
+        "status_camera_denied": "无法打开相机。请允许相机权限后重试。",
+        "status_camera_not_ready": "相机尚未准备好，请稍等。",
+        "status_create_failed": "无法生成照片，请重新拍摄。",
+        "status_no_image": "还没有照片，请先拍照。",
+        "status_upload_success": "照片已发送。请返回 LINE 聊天等待结果。",
+        "status_upload_unlinked": "系统已收到照片，但尚未连接到您的 LINE 账号。",
+        "status_upload_failed": "照片发送失败，请重试。",
+    },
+}
 
 if LIFF_CAMERA_DIR.exists():
     app.mount("/static/liff-camera", StaticFiles(directory=str(LIFF_CAMERA_DIR)), name="liff-camera-static")
@@ -1653,6 +1765,16 @@ def liff_camera_page():
 @app.get("/liff/config")
 def liff_config():
     return {"liff_id": os.environ.get("LIFF_ID", "")}
+
+
+@app.get("/liff/messages")
+def liff_messages(line_user_id: str = ""):
+    language = get_user_language(line_user_id) if line_user_id else DEFAULT_LANGUAGE
+    language = normalize_language(language)
+    return {
+        "language": language,
+        "messages": LIFF_CAMERA_MESSAGES.get(language, LIFF_CAMERA_MESSAGES[DEFAULT_LANGUAGE]),
+    }
 
 
 @app.post("/liff/upload-label")

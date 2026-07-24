@@ -15,18 +15,85 @@ const processingOverlay = document.getElementById("processingOverlay");
 const processingText = document.getElementById("processingText");
 const cameraShell = document.querySelector(".camera-shell");
 
+const FALLBACK_MESSAGES = {
+  document_title: "Medication Label Camera",
+  processing: "กำลังประมวลผล...",
+  guide_header: "ส่วนหัวฉลาก",
+  guide_body: "ชื่อยาและวิธีใช้",
+  title: "ถ่ายฉลากยา",
+  subtitle: "วางฉลากให้อยู่ในกรอบ และให้เส้นคั่นบนฉลากตรงกับเส้นกลางกรอบ",
+  preview_instruction: "ตรวจรูปก่อนส่ง ถ้าไม่ชัดให้กดถ่ายใหม่",
+  preview_alt: "รูปฉลากยาที่ถ่ายแล้ว",
+  capture_button: "ถ่ายรูป",
+  retake_button: "ถ่ายใหม่",
+  upload_button: "ส่งรูป",
+  status_camera_unsupported: "อุปกรณ์นี้ไม่รองรับการเปิดกล้องผ่านเว็บ",
+  status_align_label: "จัดฉลากให้อยู่ในกรอบ แล้วกดถ่ายรูป",
+  status_camera_denied: "เปิดกล้องไม่ได้ กรุณาอนุญาตสิทธิ์กล้องแล้วลองใหม่",
+  status_camera_not_ready: "กล้องยังไม่พร้อม กรุณารอสักครู่",
+  status_create_failed: "สร้างรูปไม่สำเร็จ กรุณาถ่ายใหม่",
+  status_no_image: "ยังไม่มีรูป กรุณาถ่ายรูปก่อน",
+  status_upload_success: "ส่งรูปสำเร็จ กลับไปที่แชท LINE เพื่อรอผลลัพธ์",
+  status_upload_unlinked: "ระบบได้รับรูปแล้ว แต่ยังไม่ได้เชื่อมกับบัญชี LINE",
+  status_upload_failed: "ส่งรูปไม่สำเร็จ กรุณาลองใหม่",
+};
+
 let capturedBlob = null;
 let stream = null;
 let lineUserId = "";
 let isCapturing = false;
+let uiMessages = { ...FALLBACK_MESSAGES };
+let currentStatusKey = "";
+
+function t(key) {
+  return uiMessages[key] || FALLBACK_MESSAGES[key] || key;
+}
 
 function setStatus(message) {
+  currentStatusKey = "";
   statusText.textContent = message;
 }
 
-function setProcessingMode(enabled, message = "กำลังประมวลผล...") {
+function setStatusKey(key) {
+  currentStatusKey = key;
+  statusText.textContent = t(key);
+}
+
+function setProcessingMode(enabled, message = t("processing")) {
   processingText.textContent = message;
   processingOverlay.hidden = !enabled;
+}
+
+function applyTranslations(messages, language = "th") {
+  uiMessages = { ...FALLBACK_MESSAGES, ...(messages || {}) };
+  document.documentElement.lang = language;
+  document.title = t("document_title");
+
+  document.querySelectorAll("[data-i18n]").forEach((element) => {
+    element.textContent = t(element.dataset.i18n);
+  });
+  document.querySelectorAll("[data-i18n-alt]").forEach((element) => {
+    element.setAttribute("alt", t(element.dataset.i18nAlt));
+  });
+
+  if (currentStatusKey) {
+    statusText.textContent = t(currentStatusKey);
+  }
+}
+
+async function loadLiffMessages() {
+  const params = lineUserId ? `?line_user_id=${encodeURIComponent(lineUserId)}` : "";
+  try {
+    const response = await fetch(`/liff/messages${params}`, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`Messages failed: ${response.status}`);
+    }
+    const result = await response.json();
+    applyTranslations(result.messages, result.language);
+  } catch (error) {
+    console.warn("LIFF messages fallback to Thai", error);
+    applyTranslations(FALLBACK_MESSAGES, "th");
+  }
 }
 
 function setPreviewMode(enabled) {
@@ -56,7 +123,7 @@ function closeLiffWindowSoon() {
 
 async function startCamera() {
   if (!navigator.mediaDevices?.getUserMedia) {
-    setStatus("อุปกรณ์นี้ไม่รองรับการเปิดกล้องผ่านเว็บ");
+    setStatusKey("status_camera_unsupported");
     captureButton.disabled = true;
     return;
   }
@@ -71,10 +138,10 @@ async function startCamera() {
       audio: false,
     });
     video.srcObject = stream;
-    setStatus("จัดฉลากให้อยู่ในกรอบ แล้วกดถ่ายรูป");
+    setStatusKey("status_align_label");
   } catch (error) {
     console.error(error);
-    setStatus("เปิดกล้องไม่ได้ กรุณาอนุญาตสิทธิ์กล้องแล้วลองใหม่");
+    setStatusKey("status_camera_denied");
     captureButton.disabled = true;
   }
 }
@@ -135,14 +202,14 @@ function captureGuideFrame() {
   }
 
   if (!video.videoWidth || !video.videoHeight) {
-    setStatus("กล้องยังไม่พร้อม กรุณารอสักครู่");
+    setStatusKey("status_camera_not_ready");
     return;
   }
 
   isCapturing = true;
   captureButton.disabled = true;
   setStatus("");
-  setProcessingMode(true, "กำลังประมวลผล...");
+  setProcessingMode(true);
 
   const source = getGuideSourceRect();
   const context = canvas.getContext("2d", { alpha: false });
@@ -165,7 +232,7 @@ function captureGuideFrame() {
       setProcessingMode(false);
 
       if (!blob) {
-        setStatus("สร้างรูปไม่สำเร็จ กรุณาถ่ายใหม่");
+        setStatusKey("status_create_failed");
         return;
       }
 
@@ -191,19 +258,19 @@ function retake() {
   uploadButton.disabled = false;
   captureButton.disabled = false;
   setPreviewMode(false);
-  setStatus("จัดฉลากให้อยู่ในกรอบ แล้วกดถ่ายรูป");
+  setStatusKey("status_align_label");
 }
 
 async function uploadCapture() {
   if (!capturedBlob) {
-    setStatus("ยังไม่มีรูป กรุณาถ่ายรูปก่อน");
+    setStatusKey("status_no_image");
     return;
   }
 
   uploadButton.disabled = true;
   retakeButton.disabled = true;
   setStatus("");
-  setProcessingMode(true, "กำลังประมวลผล...");
+  setProcessingMode(true);
 
   try {
     const response = await fetch("/liff/upload-label", {
@@ -221,17 +288,17 @@ async function uploadCapture() {
 
     const result = await response.json();
     if (result.processing_queued) {
-      setStatus("ส่งรูปสำเร็จ กลับไปที่แชท LINE เพื่อรอผลลัพธ์");
+      setStatusKey("status_upload_success");
       closeLiffWindowSoon();
     } else {
-      setStatus("ระบบได้รับรูปแล้ว แต่ยังไม่ได้เชื่อมกับบัญชี LINE");
+      setStatusKey("status_upload_unlinked");
     }
     setProcessingMode(false);
     retakeButton.disabled = false;
   } catch (error) {
     console.error(error);
     setProcessingMode(false);
-    setStatus("ส่งรูปไม่สำเร็จ กรุณาลองใหม่");
+    setStatusKey("status_upload_failed");
     uploadButton.disabled = false;
     retakeButton.disabled = false;
   }
@@ -241,5 +308,10 @@ captureButton.addEventListener("click", captureGuideFrame);
 retakeButton.addEventListener("click", retake);
 uploadButton.addEventListener("click", uploadCapture);
 
-initializeLiff();
-startCamera();
+async function bootstrap() {
+  await initializeLiff();
+  await loadLiffMessages();
+  startCamera();
+}
+
+bootstrap();
