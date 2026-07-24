@@ -212,6 +212,26 @@ class MainLanguageCommandTests(unittest.TestCase):
         self.assertTrue(main.is_language_command(f"{thai_command}\nChange Language"))
         self.assertTrue(main.is_language_command(f"{thai_command}／Change Language"))
         self.assertTrue(main.is_language_command("change language"))
+        self.assertTrue(main.is_language_command("🌐เปลี่ยนภาษา/Language"))
+        self.assertTrue(main.is_language_command("เปลี่ยนภาษา Language"))
+        self.assertTrue(main.is_language_command("เปลี่ยนภาษา\nLanguage"))
+
+    def test_rich_menu_drug_list_command_accepts_current_label(self):
+        import main
+
+        self.assertTrue(main.is_drug_list_command("💊ยาที่ต้องกิน Drug list"))
+        self.assertTrue(main.is_drug_list_command("ยาที่ต้องกิน\nDrug list"))
+        self.assertTrue(main.is_drug_list_command("ยาที่ต้องกิน/Drug list"))
+
+    def test_rich_menu_alarm_setting_command_accepts_current_label(self):
+        import main
+
+        self.assertTrue(main.is_alarm_setting_command("⏰เปลี่ยนเวลาแจ้งเตือน/Alarm setting"))
+        self.assertTrue(main.is_alarm_setting_command("⏰เปลี่ยนเวลาแจ้งเตือน/Alrm setting"))
+        self.assertTrue(main.is_alarm_setting_command("เวลาเตือน Alarm setting"))
+        self.assertTrue(main.is_alarm_setting_command("เวลาแจ้งเตือน Alarm setting"))
+        self.assertTrue(main.is_alarm_setting_command("เวลาแจ้งเตือน\nAlarm setting"))
+        self.assertTrue(main.is_alarm_setting_command("เปลี่ยนเวลาแจ้งเตือน\nAlarm setting"))
 
 
 class MainPromptLanguageTests(unittest.TestCase):

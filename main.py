@@ -1035,7 +1035,36 @@ LANGUAGE_OPTIONS = (
     {"code": "zh", "label": "🇨🇳 中文", "ai_name": "Simplified Chinese"},
 )
 AI_LANGUAGE_NAMES = {item["code"]: item["ai_name"] for item in LANGUAGE_OPTIONS}
-LANGUAGE_COMMANDS = {"เปลี่ยนภาษา", "Change Language", "เปลี่ยนภาษา / Change Language"}
+LANGUAGE_COMMANDS = {
+    "เปลี่ยนภาษา",
+    "Change Language",
+    "Language",
+    "เปลี่ยนภาษา / Change Language",
+    "เปลี่ยนภาษา / Language",
+    "🌐เปลี่ยนภาษา/Language",
+}
+DRUG_LIST_COMMANDS = {
+    "เช็กรายการยา",
+    "ยาที่ต้องกิน",
+    "Drug list",
+    "ยาที่ต้องกิน Drug list",
+    "💊ยาที่ต้องกิน Drug list",
+}
+ALARM_SETTING_COMMANDS = {
+    "เปลี่ยนเวลาแจ้งเตือน",
+    "เวลาเตือน",
+    "เวลาแจ้งเตือน",
+    "Alarm setting",
+    "Alrm setting",
+    "เวลาเตือน Alarm setting",
+    "เวลาเตือน Alrm setting",
+    "เวลาแจ้งเตือน Alarm setting",
+    "เวลาแจ้งเตือน Alrm setting",
+    "เปลี่ยนเวลาแจ้งเตือน / Alarm setting",
+    "เปลี่ยนเวลาแจ้งเตือน / Alrm setting",
+    "⏰เปลี่ยนเวลาแจ้งเตือน/Alarm setting",
+    "⏰เปลี่ยนเวลาแจ้งเตือน/Alrm setting",
+}
 
 
 def reply_or_push_message(line_api, user_id: str, reply_token: str, messages):
@@ -1054,15 +1083,51 @@ def normalize_command_text(text: str) -> str:
     return " ".join((text or "").replace("／", "/").split())
 
 
+def command_match_key(text: str) -> str:
+    normalized = normalize_command_text(text).lower()
+    return re.sub(r"[^0-9a-z\u0e00-\u0e7f]+", "", normalized)
+
+
+def command_matches(text: str, commands: set[str]) -> bool:
+    normalized_text = normalize_command_text(text)
+    lowered_text = normalized_text.lower()
+    command_keys = {command_match_key(command) for command in commands}
+    return (
+        normalized_text in commands
+        or lowered_text in {command.lower() for command in commands}
+        or command_match_key(normalized_text) in command_keys
+    )
+
+
 def is_language_command(text: str) -> bool:
     normalized_text = normalize_command_text(text)
     lowered_text = normalized_text.lower()
-    lowered_commands = {command.lower() for command in LANGUAGE_COMMANDS}
 
     return (
-        normalized_text in LANGUAGE_COMMANDS
-        or lowered_text in lowered_commands
+        command_matches(text, LANGUAGE_COMMANDS)
         or ("เปลี่ยนภาษา" in normalized_text and "change language" in lowered_text)
+        or ("เปลี่ยนภาษา" in normalized_text and "language" in lowered_text)
+    )
+
+
+def is_drug_list_command(text: str) -> bool:
+    normalized_text = normalize_command_text(text)
+    lowered_text = normalized_text.lower()
+    return (
+        command_matches(text, DRUG_LIST_COMMANDS)
+        or ("ยาที่ต้องกิน" in normalized_text and "drug" in lowered_text)
+    )
+
+
+def is_alarm_setting_command(text: str) -> bool:
+    normalized_text = normalize_command_text(text)
+    lowered_text = normalized_text.lower()
+    return (
+        command_matches(text, ALARM_SETTING_COMMANDS)
+        or ("เวลา" in normalized_text and "alarm" in lowered_text)
+        or ("เวลา" in normalized_text and "alrm" in lowered_text)
+        or ("แจ้งเตือน" in normalized_text and "alarm" in lowered_text)
+        or ("แจ้งเตือน" in normalized_text and "alrm" in lowered_text)
     )
 
 
@@ -2769,7 +2834,7 @@ def handle_text_message(event):
     # ==========================================
     # ⚡ [ดักจับพิเศษ] คำสั่งจาก Rich Menu
     # ==========================================
-    if user_text == "เช็กรายการยา":
+    if is_drug_list_command(user_text):
         try:
             # ดึงข้อมูลยาที่ยัง Active อยู่ของลูกค้ารายนี้
             res = supabase.table("reminder_schedules").select("drug_name, morning, noon, evening, bedtime").eq("line_uid", user_id).eq("is_active", True).execute()
@@ -2795,7 +2860,7 @@ def handle_text_message(event):
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ขออภัยครับ ไม่สามารถดึงข้อมูลรายการยาได้ในขณะนี้"))
         return # หยุดการทำงานตรงนี้ ไม่ต้องส่งไปหา AI
 
-    elif user_text == "เปลี่ยนเวลาแจ้งเตือน":
+    elif is_alarm_setting_command(user_text):
         # สร้าง Flex Message ดึง Widget นาฬิกาของ LINE ขึ้นมาให้เลือก
         flex_time_picker = {
             "type": "bubble",
