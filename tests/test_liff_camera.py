@@ -42,6 +42,35 @@ class LiffCameraTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(".preview-panel[hidden]", response.text)
         self.assertIn("display: none", response.text)
 
+    async def test_liff_camera_css_keeps_guide_between_header_and_controls(self):
+        import main
+
+        transport = httpx.ASGITransport(app=main.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/static/liff-camera/style.css")
+
+        self.assertEqual(response.status_code, 200)
+        css = response.text
+        self.assertIn("grid-template-rows: auto minmax(0, 1fr) auto", css)
+        self.assertIn("grid-row: 1", css)
+        self.assertIn("grid-row: 2", css)
+        self.assertIn("grid-row: 3", css)
+
+    async def test_liff_camera_js_prevents_double_capture_and_allows_retake_after_upload(self):
+        import main
+
+        transport = httpx.ASGITransport(app=main.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/static/liff-camera/app.js")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text
+        self.assertIn("let isCapturing = false;", script)
+        self.assertIn("if (isCapturing)", script)
+        self.assertIn("captureButton.disabled = true;", script)
+        self.assertIn("retakeButton.disabled = false;", script)
+        self.assertNotIn("กลับไปที่แชท LINE เพื่อรอผลลัพธ์", script)
+
     async def test_liff_upload_label_accepts_jpeg(self):
         import main
 

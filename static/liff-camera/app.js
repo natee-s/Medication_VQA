@@ -15,6 +15,7 @@ const statusText = document.getElementById("statusText");
 let capturedBlob = null;
 let stream = null;
 let lineUserId = "";
+let isCapturing = false;
 
 function setStatus(message) {
   statusText.textContent = message;
@@ -25,6 +26,12 @@ function setPreviewMode(enabled) {
   captureButton.hidden = enabled;
   retakeButton.hidden = !enabled;
   uploadButton.hidden = !enabled;
+  if (enabled) {
+    retakeButton.disabled = false;
+    uploadButton.disabled = false;
+  } else {
+    captureButton.disabled = false;
+  }
 }
 
 async function startCamera() {
@@ -103,10 +110,18 @@ function getGuideSourceRect() {
 }
 
 function captureGuideFrame() {
+  if (isCapturing) {
+    return;
+  }
+
   if (!video.videoWidth || !video.videoHeight) {
     setStatus("กล้องยังไม่พร้อม กรุณารอสักครู่");
     return;
   }
+
+  isCapturing = true;
+  captureButton.disabled = true;
+  setStatus("กำลังสร้างรูป...");
 
   const source = getGuideSourceRect();
   const context = canvas.getContext("2d", { alpha: false });
@@ -124,6 +139,9 @@ function captureGuideFrame() {
 
   canvas.toBlob(
     (blob) => {
+      isCapturing = false;
+      captureButton.disabled = false;
+
       if (!blob) {
         setStatus("สร้างรูปไม่สำเร็จ กรุณาถ่ายใหม่");
         return;
@@ -141,10 +159,14 @@ function captureGuideFrame() {
 
 function retake() {
   capturedBlob = null;
+  isCapturing = false;
   if (capturedPreview.src) {
     URL.revokeObjectURL(capturedPreview.src);
   }
   capturedPreview.removeAttribute("src");
+  retakeButton.disabled = false;
+  uploadButton.disabled = false;
+  captureButton.disabled = false;
   setPreviewMode(false);
   setStatus("จัดฉลากให้อยู่ในกรอบ แล้วกดถ่ายรูป");
 }
@@ -173,7 +195,8 @@ async function uploadCapture() {
       throw new Error(`Upload failed: ${response.status}`);
     }
 
-    setStatus("ส่งรูปสำเร็จ กลับไปที่แชท LINE เพื่อรอผลลัพธ์");
+    setStatus("ระบบได้รับรูปแล้ว หากต้องการถ่ายใหม่ยังกดถ่ายใหม่ได้");
+    retakeButton.disabled = false;
   } catch (error) {
     console.error(error);
     setStatus("ส่งรูปไม่สำเร็จ กรุณาลองใหม่");

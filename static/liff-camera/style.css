@@ -32,8 +32,16 @@ button {
   position: fixed;
   inset: 0;
   display: grid;
-  place-items: center;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  align-items: center;
+  justify-items: center;
+  gap: 14px;
+  padding:
+    max(18px, env(safe-area-inset-top))
+    16px
+    max(14px, env(safe-area-inset-bottom));
   min-height: 100dvh;
+  min-height: 100svh;
   overflow: hidden;
 }
 
@@ -47,11 +55,10 @@ button {
 }
 
 .top-bar {
-  position: absolute;
-  top: max(18px, env(safe-area-inset-top));
-  left: 16px;
-  right: 16px;
+  grid-row: 1;
+  position: relative;
   z-index: 6;
+  width: min(92vw, 620px);
   text-align: center;
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.75);
 }
@@ -70,10 +77,12 @@ button {
 }
 
 .guide-panel {
+  grid-row: 2;
   position: relative;
   z-index: 4;
   width: var(--guide-width);
   height: var(--guide-height);
+  align-self: center;
 }
 
 .guide-frame {
@@ -146,16 +155,13 @@ button {
 }
 
 .controls {
-  position: absolute;
-  left: 16px;
-  right: 16px;
-  bottom: max(20px, env(safe-area-inset-bottom));
+  grid-row: 3;
+  position: relative;
   z-index: 7;
   display: grid;
   grid-template-columns: 1fr;
   gap: 10px;
-  max-width: 520px;
-  margin: 0 auto;
+  width: min(92vw, 520px);
 }
 
 .primary-button,
@@ -215,6 +221,11 @@ button {
 @media (orientation: landscape) {
   :root {
     --guide-width: min(68vw, 720px);
+  }
+
+  .camera-shell {
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    gap: 8px;
   }
 
   .top-bar p {
