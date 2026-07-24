@@ -14,6 +14,10 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 os.environ.setdefault("GEMINI_API_KEY", "test-key")
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
 if "pytz" not in sys.modules:
     fake_pytz = types.ModuleType("pytz")
     fake_pytz.timezone = lambda name: None
@@ -232,6 +236,112 @@ class LiffCameraTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(result.text, "LIFF QC failed")
             liff_qc.assert_called_once_with(str(image_path))
+
+    def test_ocr_candidates_prefer_generic_name_and_clean_dosage(self):
+        import main
+
+        candidates = main.extract_ocr_search_candidates(
+            {
+                "trade_name": "MYOXAN 50 MG 10'S",
+                "generic_name": "TOLPERISONE 50 mg",
+                "search_keyword": "TOLPERISONE 50 mg",
+                "search_candidates": ["TOLPERISONE", "MYOXAN", "TOLI ERISONE"],
+            }
+        )
+
+        self.assertEqual(candidates, ["TOLPERISONE", "MYOXAN", "TOLI ERISONE"])
+
+    def test_fuzzy_medicine_search_tolerates_small_ocr_spacing_typo(self):
+        import main
+
+        class FakeResult:
+            def __init__(self, data):
+                self.data = data
+
+        class FakeMedicineQuery:
+            def __init__(self, rows):
+                self.rows = rows
+                self.exact_query = None
+
+            def select(self, columns):
+                return self
+
+            def or_(self, query):
+                self.exact_query = query
+                return self
+
+            def execute(self):
+                if self.exact_query:
+                    return FakeResult([])
+                return FakeResult(self.rows)
+
+        class FakeMedicineSupabase:
+            def __init__(self, rows):
+                self.rows = rows
+
+            def table(self, name):
+                self.assert_name = name
+                return FakeMedicineQuery(self.rows)
+
+        old_supabase = main.supabase
+        main.supabase = FakeMedicineSupabase(
+            [
+                {"trade_name": "MYOXAN", "generic_name": "TOLPERISONE"},
+                {"trade_name": "TYLENOL", "generic_name": "PARACETAMOL"},
+            ]
+        )
+        try:
+            db_data, matched_keyword = main.search_medicine_candidates_in_db(["TOLI ERISONE"])
+        finally:
+            main.supabase = old_supabase
+
+        self.assertEqual(db_data["generic_name"], "TOLPERISONE")
+        self.assertEqual(matched_keyword, "TOLI ERISONE")
+
+    def test_variant_ranking_selects_matching_dosage_schedule(self):
+        import main
+
+        rows = [
+            {
+                "source_row_number": "337",
+                "label_name": "1x3",
+                "trade_name": "MYOXAN 50 MG 10'S",
+                "generic_name": "TOLPERISONE 50 mg",
+                "dosage_frequency": "ทานครั้งละ 1 เม็ด วันละ 3 ครั้ง",
+                "instruction_time": "หลังอาหาร เช้า-กลางวัน-เย็น",
+            },
+            {
+                "source_row_number": "338",
+                "label_name": "1x2",
+                "trade_name": "MYOXAN 50 MG 10'S",
+                "generic_name": "TOLPERISONE 50 mg",
+                "dosage_frequency": "ทานครั้งละ 1 เม็ด วันละ 2 ครั้ง",
+                "instruction_time": "หลังอาหาร เช้า-เย็น",
+            },
+            {
+                "source_row_number": "339",
+                "label_name": "1x1",
+                "trade_name": "MYOXAN 50 MG 10'S",
+                "generic_name": "TOLPERISONE 50 mg",
+                "dosage_frequency": "ทานครั้งละ 1 เม็ด วันละ 1 ครั้ง",
+                "instruction_time": "หลังอาหาร เย็น",
+            },
+        ]
+
+        ranked_rows = main.rank_medicine_rows(
+            rows,
+            ["TOLPERISONE", "MYOXAN"],
+            {
+                "trade_name": "MYOXAN",
+                "generic_name": "TOLPERISONE",
+                "strength": "50 mg",
+                "dosage_frequency": "ทานครั้งละ 1 เม็ด วันละ 3 ครั้ง",
+                "instruction_time": "หลังอาหาร เช้า-กลางวัน-เย็น",
+            },
+        )
+
+        self.assertEqual(ranked_rows[0][0]["source_row_number"], "337")
+        self.assertEqual(ranked_rows[0][0]["label_name"], "1x3")
 
     async def test_liff_upload_label_rejects_non_images(self):
         import main

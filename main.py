@@ -20,6 +20,8 @@ from linebot.models import (
 import os
 import cv2
 import numpy as np
+import re
+from difflib import SequenceMatcher
 from google import genai
 from google.genai import types
 import json
@@ -1851,6 +1853,300 @@ def search_medicine_in_db(drug_name: str):
         print(f"⚠️ เกิดข้อผิดพลาดในการค้นหาข้อมูล: {e}")
         return None
 
+
+MEDICINE_NAME_FIELDS = ("generic_name", "trade_name")
+MEDICINE_VARIANT_FIELDS = ("label_name", "dosage_frequency", "instruction_time", "precaution")
+
+
+def search_medicine_rows_in_db(drug_name: str) -> list[dict]:
+    if not supabase or not drug_name:
+        return []
+
+    try:
+        search_query = f"generic_name.ilike.%{drug_name}%,trade_name.ilike.%{drug_name}%"
+        response = supabase.table("Medication_VQA").select("*").or_(search_query).execute()
+        return response.data or []
+    except Exception as e:
+        print(f"⚠️ medicine row search failed for '{drug_name}': {e}")
+        return []
+
+
+def clean_medicine_candidate(value) -> str:
+    if value is None:
+        return ""
+
+    candidate = str(value).strip()
+    if not candidate or candidate.lower() in ("null", "none", "unknown", "rotated"):
+        return ""
+
+    candidate = re.sub(r"\b\d+(?:\.\d+)?\s*(?:MG|MCG|G|ML|IU|%)\b", " ", candidate, flags=re.IGNORECASE)
+    candidate = re.sub(r"\b\d+\s*'?S\b", " ", candidate, flags=re.IGNORECASE)
+    candidate = re.sub(r"\b(?:CAPSULES?|TABLETS?|TABS?|CAPS?|SYRUP|SUSPENSION)\b", " ", candidate, flags=re.IGNORECASE)
+    candidate = re.sub(r"\s+", " ", candidate)
+    return candidate.strip(" ,;:-")
+
+
+def normalize_medicine_match_text(value) -> str:
+    return re.sub(r"[^A-Z0-9]+", "", str(value or "").upper())
+
+
+def append_unique_medicine_candidate(candidates: list[str], value) -> None:
+    candidate = clean_medicine_candidate(value)
+    if not candidate:
+        return
+
+    normalized = normalize_medicine_match_text(candidate)
+    if not normalized:
+        return
+
+    existing = {normalize_medicine_match_text(item) for item in candidates}
+    if normalized not in existing:
+        candidates.append(candidate)
+
+
+def extract_ocr_search_candidates(data: dict) -> list[str]:
+    candidates = []
+    append_unique_medicine_candidate(candidates, data.get("generic_name"))
+    append_unique_medicine_candidate(candidates, data.get("trade_name"))
+    append_unique_medicine_candidate(candidates, data.get("search_keyword"))
+
+    raw_candidates = data.get("search_candidates") or []
+    if isinstance(raw_candidates, str):
+        raw_candidates = [raw_candidates]
+
+    for candidate in raw_candidates:
+        append_unique_medicine_candidate(candidates, candidate)
+
+    return candidates
+
+
+def medicine_name_similarity(left: str, right: str) -> float:
+    left_norm = normalize_medicine_match_text(left)
+    right_norm = normalize_medicine_match_text(right)
+    if not left_norm or not right_norm:
+        return 0.0
+
+    if left_norm == right_norm:
+        return 1.0
+
+    shorter, longer = sorted((left_norm, right_norm), key=len)
+    if len(shorter) >= 5 and shorter in longer:
+        return 0.96
+
+    return SequenceMatcher(None, left_norm, right_norm).ratio()
+
+
+def dedupe_medicine_rows(rows: list[dict]) -> list[dict]:
+    seen = set()
+    unique_rows = []
+    for row in rows:
+        key = (
+            row.get("source_row_number"),
+            row.get("source_item_id"),
+            row.get("label_name"),
+            row.get("trade_name"),
+            row.get("generic_name"),
+            row.get("dosage_frequency"),
+            row.get("instruction_time"),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_rows.append(row)
+    return unique_rows
+
+
+def extract_strength_tokens(*values) -> set[str]:
+    text = " ".join(str(value or "") for value in values)
+    token_pattern = re.compile(
+        r"\b\d+(?:\.\d+)?\s*(?:MG|MCG|G|ML|IU|%)\s*(?:/\s*\d+(?:\.\d+)?\s*(?:ML|MG|G))?",
+        flags=re.IGNORECASE,
+    )
+    return {normalize_medicine_match_text(match.group(0)) for match in token_pattern.finditer(text)}
+
+
+def extract_frequency_count(*values):
+    text = " ".join(str(value or "") for value in values).lower()
+    patterns = [
+        r"วันละ\s*(\d+)\s*ครั้ง",
+        r"วันละ\s*(\d+)",
+        r"\b1\s*x\s*(\d+)\b",
+        r"\b(\d+)\s*times?\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+
+    if "เช้า-กลางวัน-เย็น" in text or "เช้า กลางวัน เย็น" in text:
+        return 3
+    if "เช้า-เย็น" in text or "เช้า เย็น" in text:
+        return 2
+    if "once" in text:
+        return 1
+    if "twice" in text:
+        return 2
+    return None
+
+
+def extract_time_slots(*values) -> set[str]:
+    text = " ".join(str(value or "") for value in values).lower()
+    slots = set()
+    if "เช้า" in text or "morning" in text:
+        slots.add("morning")
+    if "กลางวัน" in text or "เที่ยง" in text or "noon" in text:
+        slots.add("noon")
+    if "เย็น" in text or "evening" in text:
+        slots.add("evening")
+    if "นอน" in text or "bedtime" in text:
+        slots.add("bedtime")
+    return slots
+
+
+def extract_meal_timing(*values):
+    text = " ".join(str(value or "") for value in values).lower()
+    if "ก่อนอาหาร" in text or "before meal" in text or "before food" in text:
+        return "before"
+    if "หลังอาหาร" in text or "after meal" in text or "after food" in text:
+        return "after"
+    return None
+
+
+def collect_ocr_variant_values(ocr_data: dict | None) -> list[str]:
+    if not ocr_data:
+        return []
+    values = []
+    for key in (
+        "trade_name",
+        "generic_name",
+        "search_keyword",
+        "strength",
+        "dosage_frequency",
+        "instruction_time",
+        "label_name",
+        "visible_text",
+        "visible_text_summary",
+    ):
+        value = ocr_data.get(key)
+        if value:
+            values.append(str(value))
+    for candidate in ocr_data.get("search_candidates") or []:
+        if candidate:
+            values.append(str(candidate))
+    return values
+
+
+def score_medicine_row(row: dict, candidates: list[str], ocr_data: dict | None = None) -> float:
+    score = 0.0
+
+    name_score = 0.0
+    for candidate in candidates:
+        for field in MEDICINE_NAME_FIELDS:
+            name_score = max(name_score, medicine_name_similarity(candidate, row.get(field)))
+    score += name_score * 100
+
+    if ocr_data:
+        generic_score = medicine_name_similarity(ocr_data.get("generic_name"), row.get("generic_name"))
+        trade_score = medicine_name_similarity(ocr_data.get("trade_name"), row.get("trade_name"))
+        score += generic_score * 30
+        score += trade_score * 30
+
+    ocr_values = collect_ocr_variant_values(ocr_data)
+    row_values = [row.get(field) for field in (*MEDICINE_NAME_FIELDS, *MEDICINE_VARIANT_FIELDS)]
+
+    ocr_strengths = extract_strength_tokens(*ocr_values)
+    row_strengths = extract_strength_tokens(*row_values)
+    if ocr_strengths and row_strengths:
+        score += 25 if ocr_strengths & row_strengths else -15
+
+    ocr_frequency = extract_frequency_count(*ocr_values)
+    row_frequency = extract_frequency_count(*row_values)
+    if ocr_frequency and row_frequency:
+        score += 35 if ocr_frequency == row_frequency else -25
+
+    ocr_slots = extract_time_slots(*ocr_values)
+    row_slots = extract_time_slots(*row_values)
+    if ocr_slots and row_slots:
+        score += 8 * len(ocr_slots & row_slots)
+        if ocr_slots == row_slots:
+            score += 12
+
+    ocr_meal_timing = extract_meal_timing(*ocr_values)
+    row_meal_timing = extract_meal_timing(*row_values)
+    if ocr_meal_timing and row_meal_timing:
+        score += 10 if ocr_meal_timing == row_meal_timing else -8
+
+    return score
+
+
+def rank_medicine_rows(rows: list[dict], candidates: list[str], ocr_data: dict | None = None) -> list[tuple[dict, float]]:
+    ranked_rows = [(row, score_medicine_row(row, candidates, ocr_data)) for row in dedupe_medicine_rows(rows)]
+    ranked_rows.sort(key=lambda item: item[1], reverse=True)
+    return ranked_rows
+
+
+def search_medicine_fuzzy_rows_in_db(candidates: list[str], threshold: float = 0.86) -> list[dict]:
+    if not supabase:
+        return []
+
+    try:
+        response = supabase.table("Medication_VQA").select("*").execute()
+    except Exception as e:
+        print(f"⚠️ fuzzy medicine search skipped: {e}")
+        return []
+
+    matched_rows = []
+    for row in response.data or []:
+        best_score = 0.0
+        for candidate in candidates:
+            for field in MEDICINE_NAME_FIELDS:
+                best_score = max(best_score, medicine_name_similarity(candidate, row.get(field)))
+        if best_score >= threshold:
+            matched_rows.append(row)
+
+    return dedupe_medicine_rows(matched_rows)
+
+
+def search_medicine_fuzzy_in_db(candidates: list[str], threshold: float = 0.86):
+    rows = search_medicine_fuzzy_rows_in_db(candidates, threshold=threshold)
+    if not rows:
+        return None
+
+    ranked_rows = rank_medicine_rows(rows, candidates)
+    best_row, best_score = ranked_rows[0]
+    print(f"🔎 Fuzzy medicine match: {best_row.get('generic_name') or best_row.get('trade_name')} ({best_score:.2f})")
+    return best_row
+
+
+def search_medicine_candidates_in_db(candidates: list[str], ocr_data: dict | None = None):
+    exact_rows = []
+    for candidate in candidates:
+        exact_rows.extend(search_medicine_rows_in_db(candidate))
+
+    if exact_rows:
+        ranked_rows = rank_medicine_rows(exact_rows, candidates, ocr_data)
+        best_row, best_score = ranked_rows[0]
+        print(
+            "🔎 Ranked medicine match: "
+            f"{best_row.get('trade_name') or best_row.get('generic_name')} "
+            f"[{best_row.get('label_name') or '-'}] ({best_score:.2f})"
+        )
+        return best_row, candidates[0] if candidates else ""
+
+    fuzzy_rows = search_medicine_fuzzy_rows_in_db(candidates)
+    if fuzzy_rows:
+        ranked_rows = rank_medicine_rows(fuzzy_rows, candidates, ocr_data)
+        best_row, best_score = ranked_rows[0]
+        print(
+            "🔎 Ranked fuzzy medicine match: "
+            f"{best_row.get('trade_name') or best_row.get('generic_name')} "
+            f"[{best_row.get('label_name') or '-'}] ({best_score:.2f})"
+        )
+        return best_row, candidates[0] if candidates else ""
+
+    return None, candidates[0] if candidates else ""
+
+
 # ==========================================
 # 3. ฟังก์ชันหลัก: จัดการเมื่อมีผู้ใช้ส่งรูปภาพเข้ามา
 # ==========================================
@@ -2049,15 +2345,27 @@ def handle_image(event):
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=t(user_language, "generic_processing_error")))    
 
 OCR_MEDICINE_LABEL_PROMPT = """
-You are an OCR system that extracts one medicine search keyword from a medicine label image.
+You are a deterministic OCR system for pharmacy medicine labels.
+The label usually contains a trade name on the first large English line and a generic name on the next large English line.
+
 Rules:
 1. If the image is sideways or upside down, return "rotated" in the error field.
-2. If the image is upright, extract the clearest English generic name or trade name.
-3. Return one medicine name only. Do not include dosage such as mg, ml, tablet count, or frequency.
-4. Return JSON only with exactly these keys:
+2. If the image is upright, read the English medicine names exactly as printed.
+3. Prefer the generic name for search_keyword. If the generic name is unclear but the trade name is clear, use the trade name.
+4. In trade_name, generic_name, and search_keyword, do not include dosage, package count, frequency, or Thai text. Examples to remove: 50 MG, 10'S, mg, ml.
+5. Extract strength, dosage_frequency, and instruction_time separately if they are visible on the label. Keep Thai dosing text exactly as printed; do not translate it.
+6. Do not invent or correct a name. If unsure between similar spellings, include the alternatives in search_candidates.
+7. Return JSON only with exactly these keys:
 {
   "error": "rotated or null",
-  "search_keyword": "English medicine name or null"
+  "trade_name": "English trade name or null",
+  "generic_name": "English generic name or null",
+  "strength": "medicine strength such as 50 mg or null",
+  "dosage_frequency": "visible dosage frequency such as วันละ 3 ครั้ง or null",
+  "instruction_time": "visible timing such as หลังอาหาร เช้า-กลางวัน-เย็น or null",
+  "search_keyword": "best English medicine name for database search or null",
+  "search_candidates": ["generic name first", "trade name second", "other plausible OCR alternatives"],
+  "confidence": "high, medium, or low"
 }
 """
 
@@ -2148,21 +2456,26 @@ def build_liff_label_result_message(user_id: str, source_image_path: str, upload
             contents=[
                 types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
                 OCR_MEDICINE_LABEL_PROMPT,
-                f"{language_instruction} Keep JSON keys exactly as specified; do not translate search_keyword.",
+                f"{language_instruction} Keep JSON keys exactly as specified; do not translate medicine names.",
             ],
+            config=types.GenerateContentConfig(
+                temperature=0,
+                response_mime_type="application/json",
+            ),
         )
         data = parse_ai_json_response(response.text)
 
         if data.get("error") == "rotated":
             return TextSendMessage(text=t(user_language, "ocr_rotated_image"))
 
-        search_keyword = data.get("search_keyword")
-        if not search_keyword:
+        search_candidates = extract_ocr_search_candidates(data)
+        print(f"LIFF OCR candidates for {upload_id}: {search_candidates}")
+        if not search_candidates:
             return TextSendMessage(text=t(user_language, "ocr_unclear_drug_name"))
 
-        db_data = search_medicine_in_db(search_keyword)
+        db_data, matched_keyword = search_medicine_candidates_in_db(search_candidates, data)
         if not db_data:
-            return TextSendMessage(text=t(user_language, "ocr_no_database_match", drug=search_keyword))
+            return TextSendMessage(text=t(user_language, "ocr_no_database_match", drug=matched_keyword or search_candidates[0]))
 
         display_data = build_medicine_label_display_data(ai_client, db_data, user_language)
         generic_name = display_data.get("generic_name") or t(user_language, "not_specified")
