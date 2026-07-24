@@ -162,6 +162,7 @@ button {
   grid-template-columns: 1fr;
   gap: 10px;
   width: min(92vw, 520px);
+  transition: transform 160ms ease;
 }
 
 .primary-button,
@@ -255,6 +256,12 @@ button {
   padding: 18px;
 }
 
+.camera-shell.preview-mode .preview-panel {
+  align-content: start;
+  padding-top: clamp(118px, 15svh, 190px);
+  padding-bottom: clamp(190px, 25svh, 300px);
+}
+
 .preview-panel[hidden] {
   display: none !important;
 }
@@ -266,6 +273,14 @@ button {
   border-radius: 8px;
   border: 2px solid rgba(255, 255, 255, 0.9);
   background: #111820;
+}
+
+.camera-shell.preview-mode .preview-panel img {
+  max-height: min(48svh, 520px);
+}
+
+.camera-shell.preview-mode .controls {
+  transform: translateY(clamp(42px, 6svh, 78px));
 }
 
 .preview-instruction {

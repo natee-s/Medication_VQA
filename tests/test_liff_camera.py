@@ -89,7 +89,10 @@ class LiffCameraTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('id="previewInstruction"', html_response.text)
         self.assertIn(".processing-overlay", css_response.text)
         self.assertIn(".preview-instruction", css_response.text)
+        self.assertIn(".camera-shell.preview-mode .preview-panel", css_response.text)
+        self.assertIn(".camera-shell.preview-mode .controls", css_response.text)
         self.assertIn("setProcessingMode", script_response.text)
+        self.assertIn("cameraShell.classList.toggle", script_response.text)
         self.assertIn("กำลังประมวลผล", script_response.text)
 
     async def test_liff_camera_js_closes_liff_window_after_successful_upload(self):

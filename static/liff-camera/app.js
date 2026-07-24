@@ -13,6 +13,7 @@ const capturedPreview = document.getElementById("capturedPreview");
 const statusText = document.getElementById("statusText");
 const processingOverlay = document.getElementById("processingOverlay");
 const processingText = document.getElementById("processingText");
+const cameraShell = document.querySelector(".camera-shell");
 
 let capturedBlob = null;
 let stream = null;
@@ -29,6 +30,7 @@ function setProcessingMode(enabled, message = "กำลังประมวล
 }
 
 function setPreviewMode(enabled) {
+  cameraShell.classList.toggle("preview-mode", enabled);
   previewPanel.hidden = !enabled;
   captureButton.hidden = enabled;
   retakeButton.hidden = !enabled;
