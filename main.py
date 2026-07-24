@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import BackgroundTasks, FastAPI, Request, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from linebot import LineBotApi, WebhookHandler
@@ -1555,7 +1555,7 @@ def liff_config():
 
 
 @app.post("/liff/upload-label")
-async def upload_liff_label_image(request: Request):
+async def upload_liff_label_image(request: Request, background_tasks: BackgroundTasks):
     content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
     extension = LIFF_UPLOAD_ALLOWED_TYPES.get(content_type)
     if extension is None:
@@ -1587,11 +1587,22 @@ async def upload_liff_label_image(request: Request):
         encoding="utf-8",
     )
 
+    processing_queued = bool(line_user_id)
+    upload_id = output_path.stem
+    if processing_queued:
+        background_tasks.add_task(
+            process_liff_uploaded_label_image,
+            line_user_id,
+            str(output_path),
+            upload_id,
+        )
+
     return {
         "status": "ok",
         "filename": filename,
         "size_bytes": len(image_bytes),
         "line_user_id": line_user_id,
+        "processing_queued": processing_queued,
     }
 
 
@@ -2002,6 +2013,171 @@ def handle_image(event):
     except Exception as e:
         print(f"⚠️ Error in image processing: {e}")
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=t(user_language, "generic_processing_error")))    
+
+OCR_MEDICINE_LABEL_PROMPT = """
+You are an OCR system that extracts one medicine search keyword from a medicine label image.
+Rules:
+1. If the image is sideways or upside down, return "rotated" in the error field.
+2. If the image is upright, extract the clearest English generic name or trade name.
+3. Return one medicine name only. Do not include dosage such as mg, ml, tablet count, or frequency.
+4. Return JSON only with exactly these keys:
+{
+  "error": "rotated or null",
+  "search_keyword": "English medicine name or null"
+}
+"""
+
+
+def start_line_loading_animation(user_id: str):
+    try:
+        requests.post(
+            "https://api.line.me/v2/bot/chat/loading/start",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
+            },
+            json={"chatId": user_id, "loadingSeconds": 30},
+            timeout=5,
+        )
+    except Exception as e:
+        print(f"Loading animation skipped for {user_id}: {e}")
+
+
+def cleanup_temp_paths(paths):
+    for path in paths:
+        if path and os.path.exists(path):
+            os.remove(path)
+
+
+def parse_ai_json_response(raw_text: str) -> dict:
+    cleaned_text = raw_text.strip()
+    if cleaned_text.startswith("```json"):
+        cleaned_text = cleaned_text.replace("```json", "").replace("```", "").strip()
+    elif cleaned_text.startswith("```"):
+        cleaned_text = cleaned_text.replace("```", "").strip()
+    return json.loads(cleaned_text)
+
+
+def build_reminder_payload_from_instruction(instruction_for_reminder: str) -> tuple[str, str]:
+    time_list = []
+    if instruction_for_reminder:
+        if "เช้า" in instruction_for_reminder:
+            time_list.append("morning")
+        if "กลางวัน" in instruction_for_reminder or "เที่ยง" in instruction_for_reminder:
+            time_list.append("noon")
+        if "เย็น" in instruction_for_reminder:
+            time_list.append("evening")
+        if "นอน" in instruction_for_reminder:
+            time_list.append("bedtime")
+
+    time_payload = ",".join(time_list) if time_list else "none"
+    meal_timing = "after"
+    if "ก่อนอาหาร" in instruction_for_reminder or "ก่อน" in instruction_for_reminder:
+        meal_timing = "before"
+    return time_payload, meal_timing
+
+
+def build_liff_label_result_message(user_id: str, source_image_path: str, upload_id: str):
+    user_language = get_user_language(user_id)
+    language_instruction = build_language_instruction(user_language)
+    safe_upload_id = "".join(ch if ch.isalnum() or ch in ("_", "-") else "_" for ch in upload_id)
+    normalized_file_path = f"/tmp/{safe_upload_id}_normalized.jpg"
+    rectified_file_path = f"/tmp/{safe_upload_id}_rectified.jpg"
+    safe_file_path = f"/tmp/{safe_upload_id}_safe.jpg"
+    intermediate_paths = (normalized_file_path, rectified_file_path, safe_file_path)
+
+    try:
+        is_good, qc_message = check_image_quality(source_image_path)
+        if not is_good:
+            return TextSendMessage(text=qc_message)
+
+        normalize_ok, normalize_message = normalize_label_image_for_ai(source_image_path, normalized_file_path)
+        if not normalize_ok:
+            print(f"LIFF image preprocessing failed for {upload_id}: {normalize_message}")
+            return TextSendMessage(text=t(user_language, "generic_processing_error"))
+
+        rectify_ok, rectify_message = rectify_label_image_for_ai(normalized_file_path, rectified_file_path)
+        if not rectify_ok:
+            print(f"LIFF image rectification failed for {upload_id}: {rectify_message}")
+            return TextSendMessage(text=t(user_language, "generic_processing_error"))
+
+        pdpa_ok, pdpa_message = create_pdpa_safe_image(rectified_file_path, safe_file_path)
+        if not pdpa_ok:
+            print(f"LIFF PDPA masking failed for {upload_id}: {pdpa_message}")
+            return TextSendMessage(text=t(user_language, "pdpa_masking_failed"))
+
+        with open(safe_file_path, "rb") as image_file:
+            image_bytes = image_file.read()
+
+        response = ai_client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[
+                types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
+                OCR_MEDICINE_LABEL_PROMPT,
+                f"{language_instruction} Keep JSON keys exactly as specified; do not translate search_keyword.",
+            ],
+        )
+        data = parse_ai_json_response(response.text)
+
+        if data.get("error") == "rotated":
+            return TextSendMessage(text=t(user_language, "ocr_rotated_image"))
+
+        search_keyword = data.get("search_keyword")
+        if not search_keyword:
+            return TextSendMessage(text=t(user_language, "ocr_unclear_drug_name"))
+
+        db_data = search_medicine_in_db(search_keyword)
+        if not db_data:
+            return TextSendMessage(text=t(user_language, "ocr_no_database_match", drug=search_keyword))
+
+        display_data = build_medicine_label_display_data(ai_client, db_data, user_language)
+        generic_name = display_data.get("generic_name") or t(user_language, "not_specified")
+        instruction_for_reminder = db_data.get("instruction_time") or ""
+        time_payload, meal_timing = build_reminder_payload_from_instruction(instruction_for_reminder)
+
+        flex_bubble = build_medicine_label_flex_reply(
+            user_language,
+            display_data,
+            time_payload,
+            meal_timing,
+        )
+        return FlexSendMessage(
+            alt_text=t(user_language, "medicine_label_alt", drug=generic_name),
+            contents=flex_bubble,
+        )
+    except json.JSONDecodeError:
+        return TextSendMessage(text=t(user_language, "ai_format_error"))
+    except Exception as e:
+        print(f"LIFF image processing failed for {upload_id}: {e}")
+        return TextSendMessage(text=t(user_language, "generic_processing_error"))
+    finally:
+        cleanup_temp_paths(intermediate_paths)
+
+
+def should_keep_liff_uploaded_files() -> bool:
+    return os.environ.get("LIFF_UPLOAD_DEBUG_DIR", "").strip() != ""
+
+
+def process_liff_uploaded_label_image(line_user_id: str, image_path: str, upload_id: str):
+    user_language = get_user_language(line_user_id)
+    try:
+        start_line_loading_animation(line_user_id)
+        result_message = build_liff_label_result_message(line_user_id, image_path, upload_id)
+        line_bot_api.push_message(line_user_id, result_message)
+    except Exception as e:
+        print(f"LIFF push failed for {upload_id}: {e}")
+        try:
+            line_bot_api.push_message(
+                line_user_id,
+                TextSendMessage(text=t(user_language, "generic_processing_error")),
+            )
+        except Exception as push_error:
+            print(f"LIFF fallback push failed for {upload_id}: {push_error}")
+    finally:
+        if not should_keep_liff_uploaded_files():
+            metadata_path = str(Path(image_path).with_suffix(".json"))
+            cleanup_temp_paths((image_path, metadata_path))
+
 
 @handler.add(PostbackEvent)
 def handle_postback(event):

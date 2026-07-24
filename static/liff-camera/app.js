@@ -195,7 +195,12 @@ async function uploadCapture() {
       throw new Error(`Upload failed: ${response.status}`);
     }
 
-    setStatus("ระบบได้รับรูปแล้ว หากต้องการถ่ายใหม่ยังกดถ่ายใหม่ได้");
+    const result = await response.json();
+    if (result.processing_queued) {
+      setStatus("ส่งรูปสำเร็จ กลับไปที่แชท LINE เพื่อรอผลลัพธ์");
+    } else {
+      setStatus("ระบบได้รับรูปแล้ว แต่ยังไม่ได้เชื่อมกับบัญชี LINE");
+    }
     retakeButton.disabled = false;
   } catch (error) {
     console.error(error);

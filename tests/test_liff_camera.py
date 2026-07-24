@@ -3,6 +3,7 @@ import sys
 import tempfile
 import types
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 import httpx
@@ -69,7 +70,8 @@ class LiffCameraTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("if (isCapturing)", script)
         self.assertIn("captureButton.disabled = true;", script)
         self.assertIn("retakeButton.disabled = false;", script)
-        self.assertNotIn("กลับไปที่แชท LINE เพื่อรอผลลัพธ์", script)
+        self.assertIn("result.processing_queued", script)
+        self.assertIn("กลับไปที่แชท LINE เพื่อรอผลลัพธ์", script)
 
     async def test_liff_upload_label_accepts_jpeg(self):
         import main
@@ -110,15 +112,16 @@ class LiffCameraTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             os.environ["LIFF_UPLOAD_DEBUG_DIR"] = temp_dir
             transport = httpx.ASGITransport(app=main.app)
-            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-                response = await client.post(
-                    "/liff/upload-label",
-                    content=b"\xff\xd8\xff\xd9",
-                    headers={
-                        "content-type": "image/jpeg",
-                        "x-line-user-id": "U123456789",
-                    },
-                )
+            with patch.object(main, "process_liff_uploaded_label_image", return_value=None):
+                async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                    response = await client.post(
+                        "/liff/upload-label",
+                        content=b"\xff\xd8\xff\xd9",
+                        headers={
+                            "content-type": "image/jpeg",
+                            "x-line-user-id": "U123456789",
+                        },
+                    )
 
             self.assertEqual(response.status_code, 200)
             body = response.json()
@@ -126,6 +129,60 @@ class LiffCameraTests(unittest.IsolatedAsyncioTestCase):
             metadata_files = list(Path(temp_dir).glob("*.json"))
             self.assertEqual(len(metadata_files), 1)
             self.assertIn("U123456789", metadata_files[0].read_text(encoding="utf-8"))
+
+    async def test_liff_upload_label_queues_chat_processing_when_line_user_id_is_present(self):
+        import main
+
+        queued_jobs = []
+
+        def fake_process_liff_upload(line_user_id, image_path, upload_id):
+            queued_jobs.append((line_user_id, Path(image_path).name, upload_id))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.environ["LIFF_UPLOAD_DEBUG_DIR"] = temp_dir
+            transport = httpx.ASGITransport(app=main.app)
+            with patch.object(main, "process_liff_uploaded_label_image", side_effect=fake_process_liff_upload, create=True):
+                async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                    response = await client.post(
+                        "/liff/upload-label",
+                        content=b"\xff\xd8\xff\xd9",
+                        headers={
+                            "content-type": "image/jpeg",
+                            "x-line-user-id": "U123456789",
+                        },
+                    )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertTrue(body["processing_queued"])
+        self.assertEqual(len(queued_jobs), 1)
+        self.assertEqual(queued_jobs[0][0], "U123456789")
+        self.assertEqual(queued_jobs[0][1], body["filename"])
+        self.assertTrue(queued_jobs[0][2].startswith("liff_"))
+
+    def test_liff_processing_removes_uploaded_files_when_debug_storage_is_not_enabled(self):
+        import main
+
+        old_debug_dir = os.environ.pop("LIFF_UPLOAD_DEBUG_DIR", None)
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                image_path = Path(temp_dir) / "upload.jpg"
+                metadata_path = image_path.with_suffix(".json")
+                image_path.write_bytes(b"\xff\xd8\xff\xd9")
+                metadata_path.write_text("{}", encoding="utf-8")
+
+                with (
+                    patch.object(main, "start_line_loading_animation", return_value=None),
+                    patch.object(main, "build_liff_label_result_message", return_value=main.TextSendMessage(text="ok")),
+                    patch.object(main.line_bot_api, "push_message", return_value=None),
+                ):
+                    main.process_liff_uploaded_label_image("U123456789", str(image_path), "upload")
+
+                self.assertFalse(image_path.exists())
+                self.assertFalse(metadata_path.exists())
+        finally:
+            if old_debug_dir is not None:
+                os.environ["LIFF_UPLOAD_DEBUG_DIR"] = old_debug_dir
 
     async def test_liff_upload_label_rejects_non_images(self):
         import main
