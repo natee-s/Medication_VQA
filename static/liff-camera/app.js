@@ -11,6 +11,8 @@ const uploadButton = document.getElementById("uploadButton");
 const previewPanel = document.getElementById("previewPanel");
 const capturedPreview = document.getElementById("capturedPreview");
 const statusText = document.getElementById("statusText");
+const processingOverlay = document.getElementById("processingOverlay");
+const processingText = document.getElementById("processingText");
 
 let capturedBlob = null;
 let stream = null;
@@ -19,6 +21,11 @@ let isCapturing = false;
 
 function setStatus(message) {
   statusText.textContent = message;
+}
+
+function setProcessingMode(enabled, message = "กำลังประมวลผล...") {
+  processingText.textContent = message;
+  processingOverlay.hidden = !enabled;
 }
 
 function setPreviewMode(enabled) {
@@ -32,6 +39,17 @@ function setPreviewMode(enabled) {
   } else {
     captureButton.disabled = false;
   }
+}
+
+function closeLiffWindowSoon() {
+  setTimeout(() => {
+    if (window.liff?.isInClient?.()) {
+      window.liff.closeWindow();
+      return;
+    }
+
+    window.close();
+  }, 900);
 }
 
 async function startCamera() {
@@ -121,7 +139,8 @@ function captureGuideFrame() {
 
   isCapturing = true;
   captureButton.disabled = true;
-  setStatus("กำลังสร้างรูป...");
+  setStatus("");
+  setProcessingMode(true, "กำลังประมวลผล...");
 
   const source = getGuideSourceRect();
   const context = canvas.getContext("2d", { alpha: false });
@@ -141,6 +160,7 @@ function captureGuideFrame() {
     (blob) => {
       isCapturing = false;
       captureButton.disabled = false;
+      setProcessingMode(false);
 
       if (!blob) {
         setStatus("สร้างรูปไม่สำเร็จ กรุณาถ่ายใหม่");
@@ -150,7 +170,7 @@ function captureGuideFrame() {
       capturedBlob = blob;
       capturedPreview.src = URL.createObjectURL(blob);
       setPreviewMode(true);
-      setStatus("ตรวจรูปก่อนส่ง ถ้าไม่ชัดให้กดถ่ายใหม่");
+      setStatus("");
     },
     "image/jpeg",
     JPEG_QUALITY,
@@ -160,6 +180,7 @@ function captureGuideFrame() {
 function retake() {
   capturedBlob = null;
   isCapturing = false;
+  setProcessingMode(false);
   if (capturedPreview.src) {
     URL.revokeObjectURL(capturedPreview.src);
   }
@@ -179,7 +200,8 @@ async function uploadCapture() {
 
   uploadButton.disabled = true;
   retakeButton.disabled = true;
-  setStatus("กำลังส่งรูป...");
+  setStatus("");
+  setProcessingMode(true, "กำลังประมวลผล...");
 
   try {
     const response = await fetch("/liff/upload-label", {
@@ -198,12 +220,15 @@ async function uploadCapture() {
     const result = await response.json();
     if (result.processing_queued) {
       setStatus("ส่งรูปสำเร็จ กลับไปที่แชท LINE เพื่อรอผลลัพธ์");
+      closeLiffWindowSoon();
     } else {
       setStatus("ระบบได้รับรูปแล้ว แต่ยังไม่ได้เชื่อมกับบัญชี LINE");
     }
+    setProcessingMode(false);
     retakeButton.disabled = false;
   } catch (error) {
     console.error(error);
+    setProcessingMode(false);
     setStatus("ส่งรูปไม่สำเร็จ กรุณาลองใหม่");
     uploadButton.disabled = false;
     retakeButton.disabled = false;

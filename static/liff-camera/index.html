@@ -11,6 +11,13 @@
       <video id="cameraPreview" class="camera-preview" autoplay playsinline muted></video>
       <canvas id="captureCanvas" width="1344" height="1000" hidden></canvas>
 
+      <section id="processingOverlay" class="processing-overlay" hidden aria-live="polite" aria-busy="true">
+        <div class="processing-card">
+          <div class="processing-spinner" aria-hidden="true"></div>
+          <p id="processingText">กำลังประมวลผล...</p>
+        </div>
+      </section>
+
       <div class="shade shade-top"></div>
       <div class="shade shade-bottom"></div>
       <div class="shade shade-left"></div>
@@ -30,6 +37,7 @@
       </section>
 
       <section id="previewPanel" class="preview-panel" hidden>
+        <p id="previewInstruction" class="preview-instruction">ตรวจรูปก่อนส่ง ถ้าไม่ชัดให้กดถ่ายใหม่</p>
         <img id="capturedPreview" alt="รูปฉลากยาที่ถ่ายแล้ว" />
       </section>
 

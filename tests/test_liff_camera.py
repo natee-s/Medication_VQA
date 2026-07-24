@@ -73,6 +73,36 @@ class LiffCameraTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("result.processing_queued", script)
         self.assertIn("กลับไปที่แชท LINE เพื่อรอผลลัพธ์", script)
 
+    async def test_liff_camera_page_has_processing_overlay_and_preview_instruction(self):
+        import main
+
+        transport = httpx.ASGITransport(app=main.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            html_response = await client.get("/liff/camera")
+            css_response = await client.get("/static/liff-camera/style.css")
+            script_response = await client.get("/static/liff-camera/app.js")
+
+        self.assertEqual(html_response.status_code, 200)
+        self.assertEqual(css_response.status_code, 200)
+        self.assertEqual(script_response.status_code, 200)
+        self.assertIn('id="processingOverlay"', html_response.text)
+        self.assertIn('id="previewInstruction"', html_response.text)
+        self.assertIn(".processing-overlay", css_response.text)
+        self.assertIn(".preview-instruction", css_response.text)
+        self.assertIn("setProcessingMode", script_response.text)
+        self.assertIn("กำลังประมวลผล", script_response.text)
+
+    async def test_liff_camera_js_closes_liff_window_after_successful_upload(self):
+        import main
+
+        transport = httpx.ASGITransport(app=main.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/static/liff-camera/app.js")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("closeLiffWindowSoon", response.text)
+        self.assertIn("window.liff.closeWindow", response.text)
+
     async def test_liff_upload_label_accepts_jpeg(self):
         import main
 
@@ -183,6 +213,22 @@ class LiffCameraTests(unittest.IsolatedAsyncioTestCase):
         finally:
             if old_debug_dir is not None:
                 os.environ["LIFF_UPLOAD_DEBUG_DIR"] = old_debug_dir
+
+    def test_liff_processing_uses_liff_specific_quality_gate(self):
+        import main
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "upload.jpg"
+            image_path.write_bytes(b"\xff\xd8\xff\xd9")
+
+            with (
+                patch.object(main, "check_liff_image_quality", return_value=(False, "LIFF QC failed")) as liff_qc,
+                patch.object(main, "check_image_quality", side_effect=AssertionError("LINE QC should not run")),
+            ):
+                result = main.build_liff_label_result_message("U123456789", str(image_path), "upload")
+
+            self.assertEqual(result.text, "LIFF QC failed")
+            liff_qc.assert_called_once_with(str(image_path))
 
     async def test_liff_upload_label_rejects_non_images(self):
         import main

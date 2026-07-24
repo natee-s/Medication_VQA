@@ -135,6 +135,40 @@ def check_image_quality(file_path):
     return True, "OK"
 
 
+def check_liff_image_quality(file_path):
+    file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+    print(f"[LIFF QC] image size: {file_size_mb:.1f} MB")
+    if file_size_mb > 4.0:
+        return False, "⚠️ รูปภาพมีขนาดใหญ่เกินไป กรุณาถ่ายใหม่อีกครั้งครับ"
+
+    img = cv2.imread(file_path)
+    if img is None:
+        return False, "⚠️ ไม่สามารถอ่านไฟล์รูปภาพได้ กรุณาถ่ายใหม่อีกครั้งครับ"
+
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    brightness = np.mean(gray)
+    glare_ratio = np.sum(gray > 245) / gray.size
+    contrast = np.std(gray)
+    blur_val = cv2.Laplacian(gray, cv2.CV_64F).var()
+
+    print(
+        "[LIFF QC] "
+        f"brightness={brightness:.1f}, glare={glare_ratio:.3f}, "
+        f"contrast={contrast:.1f}, blur={blur_val:.1f}"
+    )
+
+    if brightness < 40:
+        return False, "⚠️ รูปภาพมืดเกินไป กรุณาถ่ายในที่สว่างแล้วลองใหม่ครับ"
+    if glare_ratio > 0.20:
+        return False, "⚠️ รูปภาพมีแสงสะท้อนมากเกินไป กรุณาขยับมุมกล้องแล้วถ่ายใหม่ครับ"
+    if contrast < 10:
+        return False, "⚠️ รูปภาพจางเกินไป กรุณาถ่ายให้ตัวหนังสือชัดขึ้นครับ"
+    if blur_val < 12:
+        return False, "⚠️ รูปภาพเบลอมากเกินไป กรุณาแตะโฟกัสที่กล้องแล้วถ่ายใหม่ครับ"
+
+    return True, "OK"
+
+
 # ==========================================
 # 1. ฟังก์ชันผู้เชี่ยวชาญการล้างภาพ (Image Preprocessing)
 # ==========================================
@@ -2087,7 +2121,7 @@ def build_liff_label_result_message(user_id: str, source_image_path: str, upload
     intermediate_paths = (normalized_file_path, rectified_file_path, safe_file_path)
 
     try:
-        is_good, qc_message = check_image_quality(source_image_path)
+        is_good, qc_message = check_liff_image_quality(source_image_path)
         if not is_good:
             return TextSendMessage(text=qc_message)
 
