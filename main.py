@@ -46,6 +46,7 @@ from uuid import uuid4
 STANDARD_LABEL_WIDTH = 1344
 STANDARD_LABEL_HEIGHT = 1000
 PDPA_MASK_RATIO = 0.25
+LIFF_GUIDELINE_MASK_RATIO = PDPA_MASK_RATIO
 PDPA_MASK_HEIGHT = int(STANDARD_LABEL_HEIGHT * PDPA_MASK_RATIO)
 MIN_LABEL_AREA_RATIO = 0.08
 
@@ -978,6 +979,61 @@ def create_pdpa_safe_image(input_path: str, output_path: str) -> tuple[bool, str
 
     cv2.imwrite(output_path, safe_image)
     return True, "OK"
+
+
+def create_liff_guideline_pdpa_safe_image(input_path: str, output_path: str) -> tuple[bool, str]:
+    image = cv2.imread(input_path)
+    if image is None:
+        return False, "image_read_error"
+
+    if image.size == 0 or image.shape[0] < 1 or image.shape[1] < 1:
+        return False, "empty_safe_image"
+
+    height, width = image.shape[:2]
+    if (width, height) != (STANDARD_LABEL_WIDTH, STANDARD_LABEL_HEIGHT):
+        image = cv2.resize(
+            image,
+            (STANDARD_LABEL_WIDTH, STANDARD_LABEL_HEIGHT),
+            interpolation=cv2.INTER_AREA if width > STANDARD_LABEL_WIDTH else cv2.INTER_CUBIC,
+        )
+        height = STANDARD_LABEL_HEIGHT
+
+    mask_bottom = max(1, min(int(height * LIFF_GUIDELINE_MASK_RATIO), height))
+    safe_image = image.copy()
+    safe_image[:mask_bottom, :] = (0, 0, 0)
+
+    cv2.imwrite(output_path, safe_image)
+    return True, "OK"
+
+
+def is_liff_guideline_masked_image(input_path: str) -> tuple[bool, str]:
+    image = cv2.imread(input_path)
+    if image is None:
+        return False, "image_read_error"
+
+    if image.size == 0 or image.shape[0] < 1 or image.shape[1] < 1:
+        return False, "empty_safe_image"
+
+    height = image.shape[0]
+    mask_bottom = max(1, min(int(height * LIFF_GUIDELINE_MASK_RATIO), height))
+    gray = cv2.cvtColor(image[:mask_bottom, :], cv2.COLOR_BGR2GRAY)
+    dark_ratio = float(np.mean(gray < 24))
+    if dark_ratio < 0.92:
+        return False, f"liff_header_not_masked:{dark_ratio:.3f}"
+
+    return True, "OK"
+
+
+def copy_verified_liff_masked_image(input_path: str, output_path: str) -> tuple[bool, str]:
+    is_masked, message = is_liff_guideline_masked_image(input_path)
+    if not is_masked:
+        return False, message
+
+    try:
+        Path(output_path).write_bytes(Path(input_path).read_bytes())
+        return True, "OK"
+    except Exception as e:
+        return False, f"copy_failed:{e}"
 # ==========================================
 # ⚡ ฟิลเตอร์ซ่อน Log Uvicorn เฉพาะเส้นทาง Cron Job
 # ==========================================
@@ -2578,6 +2634,27 @@ def cleanup_temp_paths(paths):
             os.remove(path)
 
 
+def get_liff_mask_debug_dir() -> Path:
+    return Path(os.environ.get("LIFF_MASK_DEBUG_DIR", str(PROJECT_ROOT / "test")))
+
+
+def save_liff_mask_debug_image(source_path: str, upload_id: str) -> Path | None:
+    try:
+        source = Path(source_path)
+        if not source.exists():
+            return None
+
+        safe_upload_id = "".join(ch if ch.isalnum() or ch in ("_", "-") else "_" for ch in upload_id)
+        debug_dir = get_liff_mask_debug_dir()
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        debug_path = debug_dir / f"{safe_upload_id}_safe.jpg"
+        debug_path.write_bytes(source.read_bytes())
+        return debug_path
+    except Exception as e:
+        print(f"LIFF masked debug image save skipped for {upload_id}: {e}")
+        return None
+
+
 def parse_ai_json_response(raw_text: str) -> dict:
     cleaned_text = raw_text.strip()
     if cleaned_text.startswith("```json"):
@@ -2610,30 +2687,20 @@ def build_liff_label_result_message(user_id: str, source_image_path: str, upload
     user_language = get_user_language(user_id)
     language_instruction = build_language_instruction(user_language)
     safe_upload_id = "".join(ch if ch.isalnum() or ch in ("_", "-") else "_" for ch in upload_id)
-    normalized_file_path = f"/tmp/{safe_upload_id}_normalized.jpg"
-    rectified_file_path = f"/tmp/{safe_upload_id}_rectified.jpg"
     safe_file_path = f"/tmp/{safe_upload_id}_safe.jpg"
-    intermediate_paths = (normalized_file_path, rectified_file_path, safe_file_path)
+    intermediate_paths = (safe_file_path,)
 
     try:
         is_good, qc_message = check_liff_image_quality(source_image_path)
         if not is_good:
             return TextSendMessage(text=qc_message)
 
-        normalize_ok, normalize_message = normalize_label_image_for_ai(source_image_path, normalized_file_path)
-        if not normalize_ok:
-            print(f"LIFF image preprocessing failed for {upload_id}: {normalize_message}")
-            return TextSendMessage(text=t(user_language, "generic_processing_error"))
-
-        rectify_ok, rectify_message = rectify_label_image_for_ai(normalized_file_path, rectified_file_path)
-        if not rectify_ok:
-            print(f"LIFF image rectification failed for {upload_id}: {rectify_message}")
-            return TextSendMessage(text=t(user_language, "generic_processing_error"))
-
-        pdpa_ok, pdpa_message = create_pdpa_safe_image(rectified_file_path, safe_file_path)
+        pdpa_ok, pdpa_message = copy_verified_liff_masked_image(source_image_path, safe_file_path)
         if not pdpa_ok:
-            print(f"LIFF PDPA masking failed for {upload_id}: {pdpa_message}")
+            print(f"LIFF masked image verification failed for {upload_id}: {pdpa_message}")
             return TextSendMessage(text=t(user_language, "pdpa_masking_failed"))
+
+        save_liff_mask_debug_image(safe_file_path, upload_id)
 
         with open(safe_file_path, "rb") as image_file:
             image_bytes = image_file.read()

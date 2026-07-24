@@ -6,7 +6,9 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 
+import cv2
 import httpx
+import numpy as np
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -76,6 +78,25 @@ class LiffCameraTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("retakeButton.disabled = false;", script)
         self.assertIn("result.processing_queued", script)
         self.assertIn('setStatusKey("status_upload_success")', script)
+
+    async def test_liff_camera_uploads_masked_blob_without_showing_masked_preview(self):
+        import main
+
+        transport = httpx.ASGITransport(app=main.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/static/liff-camera/app.js")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text
+        self.assertIn("const PDPA_MASK_RATIO = 0.25;", script)
+        self.assertIn("function applyGuidelinePdpaMask(context)", script)
+        self.assertIn("context.fillRect(0, 0, OUTPUT_WIDTH, maskHeight);", script)
+        self.assertIn("function canvasToJpegBlob()", script)
+        self.assertLess(script.index("const previewBlob = await canvasToJpegBlob();"), script.index("applyGuidelinePdpaMask(context);"))
+        self.assertLess(script.index("applyGuidelinePdpaMask(context);"), script.index("const maskedBlob = await canvasToJpegBlob();"))
+        self.assertIn("capturedBlob = maskedBlob;", script)
+        self.assertIn("capturedPreview.src = URL.createObjectURL(previewBlob);", script)
+        self.assertIn("body: capturedBlob", script)
 
     async def test_liff_camera_page_has_processing_overlay_and_preview_instruction(self):
         import main
@@ -264,6 +285,88 @@ class LiffCameraTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(result.text, "LIFF QC failed")
             liff_qc.assert_called_once_with(str(image_path))
+
+    def test_liff_mask_debug_image_is_saved_to_test_folder(self):
+        import main
+
+        old_debug_dir = os.environ.get("LIFF_MASK_DEBUG_DIR")
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                debug_dir = Path(temp_dir) / "test"
+                os.environ["LIFF_MASK_DEBUG_DIR"] = str(debug_dir)
+                source_path = Path(temp_dir) / "safe.jpg"
+                source_path.write_bytes(b"masked-image")
+
+                saved_path = main.save_liff_mask_debug_image(str(source_path), "upload/id:01")
+
+                self.assertIsNotNone(saved_path)
+                self.assertEqual(saved_path.parent, debug_dir)
+                self.assertEqual(saved_path.name, "upload_id_01_safe.jpg")
+                self.assertEqual(saved_path.read_bytes(), b"masked-image")
+        finally:
+            if old_debug_dir is None:
+                os.environ.pop("LIFF_MASK_DEBUG_DIR", None)
+            else:
+                os.environ["LIFF_MASK_DEBUG_DIR"] = old_debug_dir
+
+    def test_liff_guideline_pdpa_mask_uses_fixed_header_ratio(self):
+        import main
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = str(Path(temp_dir) / "liff_input.jpg")
+            output_path = str(Path(temp_dir) / "liff_safe.jpg")
+            image = np.full((main.STANDARD_LABEL_HEIGHT, main.STANDARD_LABEL_WIDTH, 3), 255, dtype=np.uint8)
+            cv2.putText(image, "PRIVATE HEADER", (70, 170), cv2.FONT_HERSHEY_SIMPLEX, 2.4, (0, 0, 0), 7)
+            cv2.putText(image, "MYOXAN", (70, main.PDPA_MASK_HEIGHT + 90), cv2.FONT_HERSHEY_SIMPLEX, 2.8, (0, 0, 0), 8)
+            cv2.imwrite(input_path, image)
+
+            ok, message = main.create_liff_guideline_pdpa_safe_image(input_path, output_path)
+
+            self.assertTrue(ok, message)
+            safe_image = cv2.imread(output_path)
+            self.assertIsNotNone(safe_image)
+            self.assertEqual(safe_image.shape[:2], (main.STANDARD_LABEL_HEIGHT, main.STANDARD_LABEL_WIDTH))
+            gray = cv2.cvtColor(safe_image, cv2.COLOR_BGR2GRAY)
+            self.assertGreater(np.mean(gray[:main.PDPA_MASK_HEIGHT, :] < 20), 0.99)
+            self.assertLess(np.mean(gray[main.PDPA_MASK_HEIGHT + 45:main.PDPA_MASK_HEIGHT + 155, :] < 20), 0.35)
+
+    def test_liff_copy_verification_rejects_unmasked_uploads(self):
+        import main
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = str(Path(temp_dir) / "unmasked.jpg")
+            output_path = str(Path(temp_dir) / "safe.jpg")
+            image = np.full((main.STANDARD_LABEL_HEIGHT, main.STANDARD_LABEL_WIDTH, 3), 255, dtype=np.uint8)
+            cv2.putText(image, "PRIVATE HEADER", (70, 170), cv2.FONT_HERSHEY_SIMPLEX, 2.4, (0, 0, 0), 7)
+            cv2.imwrite(input_path, image)
+
+            ok, message = main.copy_verified_liff_masked_image(input_path, output_path)
+
+            self.assertFalse(ok)
+            self.assertIn("liff_header_not_masked", message)
+            self.assertFalse(Path(output_path).exists())
+
+    def test_liff_processing_uses_verified_masked_upload_without_full_roi_pipeline(self):
+        import main
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "upload.jpg"
+            image_path.write_bytes(b"\xff\xd8\xff\xd9")
+
+            with (
+                patch.object(main, "get_user_language", return_value="th"),
+                patch.object(main, "check_liff_image_quality", return_value=(True, "OK")),
+                patch.object(main, "normalize_label_image_for_ai", side_effect=AssertionError("LIFF should not normalize")),
+                patch.object(main, "rectify_label_image_for_ai", side_effect=AssertionError("LIFF should not rectify")),
+                patch.object(main, "create_pdpa_safe_image", side_effect=AssertionError("LIFF should not use generic PDPA mask")),
+                patch.object(main, "create_liff_guideline_pdpa_safe_image", side_effect=AssertionError("LIFF should not mask again")),
+                patch.object(main, "copy_verified_liff_masked_image", return_value=(False, "test_pdpa_failed")) as liff_verify,
+            ):
+                result = main.build_liff_label_result_message("U123456789", str(image_path), "upload")
+
+            self.assertEqual(result.text, main.t("th", "pdpa_masking_failed"))
+            liff_verify.assert_called_once()
+            self.assertEqual(liff_verify.call_args.args[0], str(image_path))
 
     def test_ocr_candidates_prefer_generic_name_and_clean_dosage(self):
         import main

@@ -1,6 +1,7 @@
 const OUTPUT_WIDTH = 1344;
 const OUTPUT_HEIGHT = 1000;
 const JPEG_QUALITY = 0.9;
+const PDPA_MASK_RATIO = 0.25;
 
 const video = document.getElementById("cameraPreview");
 const canvas = document.getElementById("captureCanvas");
@@ -196,7 +197,21 @@ function getGuideSourceRect() {
   };
 }
 
-function captureGuideFrame() {
+function applyGuidelinePdpaMask(context) {
+  const maskHeight = Math.round(OUTPUT_HEIGHT * PDPA_MASK_RATIO);
+  context.save();
+  context.fillStyle = "#000000";
+  context.fillRect(0, 0, OUTPUT_WIDTH, maskHeight);
+  context.restore();
+}
+
+function canvasToJpegBlob() {
+  return new Promise((resolve) => {
+    canvas.toBlob(resolve, "image/jpeg", JPEG_QUALITY);
+  });
+}
+
+async function captureGuideFrame() {
   if (isCapturing) {
     return;
   }
@@ -225,25 +240,23 @@ function captureGuideFrame() {
     OUTPUT_HEIGHT,
   );
 
-  canvas.toBlob(
-    (blob) => {
-      isCapturing = false;
-      captureButton.disabled = false;
-      setProcessingMode(false);
+  const previewBlob = await canvasToJpegBlob();
+  applyGuidelinePdpaMask(context);
+  const maskedBlob = await canvasToJpegBlob();
 
-      if (!blob) {
-        setStatusKey("status_create_failed");
-        return;
-      }
+  isCapturing = false;
+  captureButton.disabled = false;
+  setProcessingMode(false);
 
-      capturedBlob = blob;
-      capturedPreview.src = URL.createObjectURL(blob);
-      setPreviewMode(true);
-      setStatus("");
-    },
-    "image/jpeg",
-    JPEG_QUALITY,
-  );
+  if (!previewBlob || !maskedBlob) {
+    setStatusKey("status_create_failed");
+    return;
+  }
+
+  capturedBlob = maskedBlob;
+  capturedPreview.src = URL.createObjectURL(previewBlob);
+  setPreviewMode(true);
+  setStatus("");
 }
 
 function retake() {
