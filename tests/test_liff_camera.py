@@ -309,6 +309,81 @@ class LiffCameraTests(unittest.IsolatedAsyncioTestCase):
             else:
                 os.environ["LIFF_MASK_DEBUG_DIR"] = old_debug_dir
 
+    async def test_liff_mask_debug_page_requires_token(self):
+        import main
+
+        old_token = os.environ.pop("LIFF_DEBUG_TOKEN", None)
+        try:
+            transport = httpx.ASGITransport(app=main.app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.get("/debug/liff-masked-images")
+
+            self.assertEqual(response.status_code, 404)
+        finally:
+            if old_token is not None:
+                os.environ["LIFF_DEBUG_TOKEN"] = old_token
+
+    async def test_liff_mask_debug_page_lists_masked_images_with_token(self):
+        import main
+
+        old_debug_dir = os.environ.get("LIFF_MASK_DEBUG_DIR")
+        old_token = os.environ.get("LIFF_DEBUG_TOKEN")
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                debug_dir = Path(temp_dir) / "test"
+                debug_dir.mkdir()
+                (debug_dir / "upload_001_safe.jpg").write_bytes(b"fake-image")
+                os.environ["LIFF_MASK_DEBUG_DIR"] = str(debug_dir)
+                os.environ["LIFF_DEBUG_TOKEN"] = "secret-token"
+
+                transport = httpx.ASGITransport(app=main.app)
+                async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                    response = await client.get("/debug/liff-masked-images?token=secret-token")
+
+                self.assertEqual(response.status_code, 200)
+                self.assertIn("LIFF Masked Image Debug", response.text)
+                self.assertIn("upload_001_safe.jpg", response.text)
+                self.assertIn("/debug/liff-masked-images/upload_001_safe.jpg?token=secret-token", response.text)
+        finally:
+            if old_debug_dir is None:
+                os.environ.pop("LIFF_MASK_DEBUG_DIR", None)
+            else:
+                os.environ["LIFF_MASK_DEBUG_DIR"] = old_debug_dir
+            if old_token is None:
+                os.environ.pop("LIFF_DEBUG_TOKEN", None)
+            else:
+                os.environ["LIFF_DEBUG_TOKEN"] = old_token
+
+    async def test_liff_mask_debug_file_serves_masked_image_with_token(self):
+        import main
+
+        old_debug_dir = os.environ.get("LIFF_MASK_DEBUG_DIR")
+        old_token = os.environ.get("LIFF_DEBUG_TOKEN")
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                debug_dir = Path(temp_dir) / "test"
+                debug_dir.mkdir()
+                (debug_dir / "upload_001_safe.jpg").write_bytes(b"fake-image")
+                os.environ["LIFF_MASK_DEBUG_DIR"] = str(debug_dir)
+                os.environ["LIFF_DEBUG_TOKEN"] = "secret-token"
+
+                transport = httpx.ASGITransport(app=main.app)
+                async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                    response = await client.get("/debug/liff-masked-images/upload_001_safe.jpg?token=secret-token")
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.content, b"fake-image")
+                self.assertIn("image/jpeg", response.headers["content-type"])
+        finally:
+            if old_debug_dir is None:
+                os.environ.pop("LIFF_MASK_DEBUG_DIR", None)
+            else:
+                os.environ["LIFF_MASK_DEBUG_DIR"] = old_debug_dir
+            if old_token is None:
+                os.environ.pop("LIFF_DEBUG_TOKEN", None)
+            else:
+                os.environ["LIFF_DEBUG_TOKEN"] = old_token
+
     def test_liff_guideline_pdpa_mask_uses_fixed_header_ratio(self):
         import main
 

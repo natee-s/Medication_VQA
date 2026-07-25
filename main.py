@@ -1,5 +1,5 @@
 from fastapi import BackgroundTasks, FastAPI, Request, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError, LineBotApiError
@@ -1885,6 +1885,67 @@ async def upload_liff_label_image(request: Request, background_tasks: Background
     }
 
 
+@app.get("/debug/liff-masked-images", response_class=HTMLResponse)
+def debug_liff_masked_images(token: str = "", limit: int = 20):
+    require_liff_debug_token(token)
+    safe_limit = max(1, min(limit, 50))
+    images = list_liff_mask_debug_images(safe_limit)
+    items = []
+    for image_path in images:
+        filename = image_path.name
+        modified_at = datetime.fromtimestamp(image_path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+        items.append(
+            "<article>"
+            f"<h2>{filename}</h2>"
+            f"<p>{modified_at}</p>"
+            f'<img src="/debug/liff-masked-images/{filename}?token={token}" alt="{filename}" />'
+            "</article>"
+        )
+
+    body = "\n".join(items) or "<p>No masked images found.</p>"
+    return HTMLResponse(
+        """
+        <!doctype html>
+        <html lang="en">
+          <head>
+            <meta charset="utf-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1" />
+            <title>LIFF Masked Image Debug</title>
+            <style>
+              body { margin: 0; padding: 24px; font-family: system-ui, sans-serif; background: #f6f7f9; color: #111820; }
+              h1 { margin: 0 0 16px; font-size: 24px; }
+              .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+              article { padding: 12px; border: 1px solid #d8dde3; border-radius: 8px; background: #fff; }
+              h2 { margin: 0 0 4px; font-size: 14px; word-break: break-all; }
+              p { margin: 0 0 10px; color: #5b6570; font-size: 13px; }
+              img { width: 100%; height: auto; border: 1px solid #d8dde3; border-radius: 6px; background: #111820; }
+            </style>
+          </head>
+          <body>
+            <h1>LIFF Masked Image Debug</h1>
+            <main class="grid">
+              {body}
+            </main>
+          </body>
+        </html>
+        """.replace("{body}", body)
+    )
+
+
+@app.get("/debug/liff-masked-images/{filename}")
+def debug_liff_masked_image_file(filename: str, token: str = ""):
+    require_liff_debug_token(token)
+    if not re.fullmatch(r"[A-Za-z0-9_-]+_safe\.jpg", filename):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    debug_dir = get_liff_mask_debug_dir().resolve()
+    image_path = (debug_dir / filename).resolve()
+    if image_path.parent != debug_dir or not image_path.exists():
+        raise HTTPException(status_code=404, detail="Not found")
+
+    return FileResponse(str(image_path), media_type="image/jpeg")
+
+
 @app.get("/cron/check-reminder")
 def check_reminder():
     if not supabase:
@@ -2653,6 +2714,25 @@ def save_liff_mask_debug_image(source_path: str, upload_id: str) -> Path | None:
     except Exception as e:
         print(f"LIFF masked debug image save skipped for {upload_id}: {e}")
         return None
+
+
+def require_liff_debug_token(token: str) -> None:
+    expected_token = os.environ.get("LIFF_DEBUG_TOKEN", "").strip()
+    if not expected_token or token != expected_token:
+        raise HTTPException(status_code=404, detail="Not found")
+
+
+def list_liff_mask_debug_images(limit: int = 20) -> list[Path]:
+    debug_dir = get_liff_mask_debug_dir()
+    if not debug_dir.exists():
+        return []
+
+    images = [
+        path
+        for path in debug_dir.glob("*_safe.jpg")
+        if path.is_file() and path.parent.resolve() == debug_dir.resolve()
+    ]
+    return sorted(images, key=lambda path: path.stat().st_mtime, reverse=True)[:limit]
 
 
 def parse_ai_json_response(raw_text: str) -> dict:
