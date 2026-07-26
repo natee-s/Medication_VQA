@@ -26,6 +26,7 @@ from google import genai
 from google.genai import types
 import json
 import requests
+import shutil
 from services.supabase_service import (
     DEFAULT_LANGUAGE,
     SUPPORTED_LANGUAGES,
@@ -49,6 +50,10 @@ PDPA_MASK_RATIO = 0.25
 LIFF_GUIDELINE_MASK_RATIO = PDPA_MASK_RATIO
 PDPA_MASK_HEIGHT = int(STANDARD_LABEL_HEIGHT * PDPA_MASK_RATIO)
 MIN_LABEL_AREA_RATIO = 0.08
+YOLO_LABEL_CLASS_ID = 0
+YOLO_HEADER_CLASS_ID = 1
+_yolo_obb_model = None
+_yolo_obb_model_path = None
 
 
 # ==========================================
@@ -421,6 +426,132 @@ def _warp_label_quad(image: np.ndarray, quad: np.ndarray) -> np.ndarray | None:
     return cv2.warpPerspective(image, matrix, (output_width, output_height), borderMode=cv2.BORDER_REPLICATE)
 
 
+def _warp_label_quad_to_standard(image: np.ndarray, quad: np.ndarray) -> tuple[np.ndarray | None, np.ndarray | None]:
+    ordered = _order_quad_points(quad)
+    width_a = np.linalg.norm(ordered[2] - ordered[3])
+    width_b = np.linalg.norm(ordered[1] - ordered[0])
+    height_a = np.linalg.norm(ordered[1] - ordered[2])
+    height_b = np.linalg.norm(ordered[0] - ordered[3])
+    source_width = int(max(width_a, width_b))
+    source_height = int(max(height_a, height_b))
+    if source_width < 300 or source_height < 160:
+        return None, None
+
+    destination = np.array(
+        [
+            [0, 0],
+            [STANDARD_LABEL_WIDTH - 1, 0],
+            [STANDARD_LABEL_WIDTH - 1, STANDARD_LABEL_HEIGHT - 1],
+            [0, STANDARD_LABEL_HEIGHT - 1],
+        ],
+        dtype=np.float32,
+    )
+    matrix = cv2.getPerspectiveTransform(ordered, destination)
+    rectified = cv2.warpPerspective(
+        image,
+        matrix,
+        (STANDARD_LABEL_WIDTH, STANDARD_LABEL_HEIGHT),
+        borderMode=cv2.BORDER_REPLICATE,
+    )
+    return rectified, matrix
+
+
+def _extract_yolo_obb_detections(results) -> list[dict]:
+    detections = []
+    for result in results or []:
+        obb = getattr(result, "obb", None)
+        if obb is None:
+            continue
+
+        corners = getattr(obb, "xyxyxyxy", None)
+        if corners is None:
+            continue
+
+        points = corners.cpu().numpy() if hasattr(corners, "cpu") else np.asarray(corners)
+        if points.size == 0:
+            continue
+        if points.ndim == 2 and points.shape[1] == 8:
+            points = points.reshape(-1, 4, 2)
+        elif points.ndim != 3 or points.shape[1:] != (4, 2):
+            continue
+
+        confidences = getattr(obb, "conf", None)
+        if confidences is None:
+            confidence_values = np.ones((points.shape[0],), dtype=np.float32)
+        else:
+            confidence_values = confidences.cpu().numpy() if hasattr(confidences, "cpu") else np.asarray(confidences)
+
+        classes = getattr(obb, "cls", None)
+        if classes is None:
+            class_values = np.full((points.shape[0],), get_yolo_obb_label_class_id(), dtype=np.float32)
+        else:
+            class_values = classes.cpu().numpy() if hasattr(classes, "cpu") else np.asarray(classes)
+
+        for quad, confidence, class_id in zip(points, confidence_values, class_values):
+            detections.append(
+                {
+                    "quad": quad.astype(np.float32),
+                    "confidence": float(confidence),
+                    "class_id": int(class_id),
+                }
+            )
+
+    return detections
+
+
+def _select_yolo_obb_detection(detections: list[dict], class_id: int) -> dict | None:
+    threshold = get_yolo_obb_confidence_threshold()
+    candidates = [
+        detection
+        for detection in detections
+        if detection["class_id"] == class_id and detection["confidence"] >= threshold
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: item["confidence"])
+
+
+def _predict_yolo_obb(input_path: str) -> tuple[list[dict] | None, str]:
+    model = get_yolo_obb_model()
+    if model is None:
+        return None, "yolo_obb_disabled"
+
+    try:
+        results = model.predict(
+            source=input_path,
+            imgsz=get_yolo_obb_image_size(),
+            conf=get_yolo_obb_confidence_threshold(),
+            verbose=False,
+        )
+    except Exception as e:
+        print(f"YOLO-OBB inference failed: {e}")
+        return None, "yolo_obb_inference_failed"
+
+    return _extract_yolo_obb_detections(results), "OK"
+
+
+def rectify_label_image_with_yolo_obb(input_path: str, output_path: str) -> tuple[bool, str]:
+    image = cv2.imread(input_path)
+    if image is None:
+        return False, "image_read_error"
+
+    detections, message = _predict_yolo_obb(input_path)
+    if detections is None:
+        return False, message
+
+    label_detection = _select_yolo_obb_detection(detections, get_yolo_obb_label_class_id())
+    if label_detection is None:
+        return False, "yolo_obb_no_label"
+
+    rectified, _ = _warp_label_quad_to_standard(image, label_detection["quad"])
+    if rectified is None or rectified.size == 0:
+        return False, "yolo_obb_empty_warp"
+
+    cv2.imwrite(output_path, rectified)
+    print(f"YOLO-OBB label rectification used ({label_detection['confidence']:.3f})")
+    return True, "OK"
+
+
 def detect_label_roi_bounds(image: np.ndarray) -> tuple[int, int, int, int] | None:
     if image is None:
         return None
@@ -531,6 +662,72 @@ def _standardize_label_crop(crop: np.ndarray) -> np.ndarray:
         (STANDARD_LABEL_WIDTH, STANDARD_LABEL_HEIGHT),
         interpolation=cv2.INTER_AREA if crop.shape[1] > STANDARD_LABEL_WIDTH else cv2.INTER_CUBIC,
     )
+
+
+def get_yolo_obb_model_path() -> str:
+    configured_path = os.environ.get("YOLO_OBB_MODEL_PATH", "").strip()
+    if configured_path:
+        return configured_path
+    return str(Path(__file__).resolve().parent / "models" / "yolo_obb" / "best.pt")
+
+
+def get_yolo_obb_confidence_threshold() -> float:
+    try:
+        return float(os.environ.get("YOLO_OBB_CONFIDENCE", "0.45"))
+    except ValueError:
+        return 0.45
+
+
+def get_yolo_obb_image_size() -> int:
+    try:
+        return int(os.environ.get("YOLO_OBB_IMAGE_SIZE", "1024"))
+    except ValueError:
+        return 1024
+
+
+def get_yolo_obb_label_class_id() -> int:
+    try:
+        return int(os.environ.get("YOLO_OBB_LABEL_CLASS_ID", str(YOLO_LABEL_CLASS_ID)))
+    except ValueError:
+        return YOLO_LABEL_CLASS_ID
+
+
+def get_yolo_obb_header_class_id() -> int:
+    try:
+        return int(os.environ.get("YOLO_OBB_HEADER_CLASS_ID", str(YOLO_HEADER_CLASS_ID)))
+    except ValueError:
+        return YOLO_HEADER_CLASS_ID
+
+
+def get_yolo_obb_model():
+    global _yolo_obb_model, _yolo_obb_model_path
+
+    model_path = get_yolo_obb_model_path()
+    if not model_path:
+        return None
+
+    if _yolo_obb_model is not None and _yolo_obb_model_path == model_path:
+        return _yolo_obb_model
+
+    if not Path(model_path).exists():
+        print(f"YOLO-OBB model not found: {model_path}")
+        return None
+
+    try:
+        from ultralytics import YOLO
+    except ImportError:
+        print("YOLO-OBB skipped: ultralytics is not installed")
+        return None
+
+    try:
+        _yolo_obb_model = YOLO(model_path)
+        _yolo_obb_model_path = model_path
+        return _yolo_obb_model
+    except Exception as e:
+        print(f"YOLO-OBB model load failed: {e}")
+        _yolo_obb_model = None
+        _yolo_obb_model_path = None
+        return None
 
 
 def _find_upper_divider_y_on_standard_label(image: np.ndarray) -> int | None:
@@ -666,7 +863,14 @@ def _extend_pdpa_mask_bottom_for_header_tail(image: np.ndarray, mask_bottom: int
     return max(mask_bottom, extended_bottom)
 
 
-def rectify_label_image_for_ai(input_path: str, output_path: str) -> tuple[bool, str]:
+def rectify_label_image_for_ai(input_path: str, output_path: str, use_yolo_obb: bool = True) -> tuple[bool, str]:
+    if use_yolo_obb:
+        yolo_ok, yolo_message = rectify_label_image_with_yolo_obb(input_path, output_path)
+        if yolo_ok:
+            return True, "OK"
+        if yolo_message != "yolo_obb_disabled":
+            print(f"YOLO-OBB rectification fallback to OpenCV: {yolo_message}")
+
     image = cv2.imread(input_path)
     if image is None:
         return False, "image_read_error"
@@ -978,6 +1182,53 @@ def create_pdpa_safe_image(input_path: str, output_path: str) -> tuple[bool, str
     safe_image[:mask_bottom, :] = (0, 0, 0)
 
     cv2.imwrite(output_path, safe_image)
+    return True, "OK"
+
+
+def create_yolo_obb_pdpa_safe_image(
+    input_path: str,
+    rectified_output_path: str,
+    safe_output_path: str,
+) -> tuple[bool, str]:
+    image = cv2.imread(input_path)
+    if image is None:
+        return False, "image_read_error"
+
+    detections, message = _predict_yolo_obb(input_path)
+    if detections is None:
+        return False, message
+
+    label_detection = _select_yolo_obb_detection(detections, get_yolo_obb_label_class_id())
+    if label_detection is None:
+        return False, "yolo_obb_no_label"
+
+    rectified, transform_matrix = _warp_label_quad_to_standard(image, label_detection["quad"])
+    if rectified is None or rectified.size == 0 or transform_matrix is None:
+        return False, "yolo_obb_empty_warp"
+
+    header_detection = _select_yolo_obb_detection(detections, get_yolo_obb_header_class_id())
+    mask_source = "fallback_ratio"
+    mask_bottom = max(1, min(int(STANDARD_LABEL_HEIGHT * PDPA_MASK_RATIO), STANDARD_LABEL_HEIGHT))
+    if header_detection is not None:
+        header_quad = header_detection["quad"].reshape(1, 4, 2).astype(np.float32)
+        transformed_header = cv2.perspectiveTransform(header_quad, transform_matrix).reshape(4, 2)
+        padding = max(12, int(STANDARD_LABEL_HEIGHT * 0.015))
+        mask_bottom = int(np.ceil(np.max(transformed_header[:, 1]))) + padding
+        mask_bottom = max(1, min(mask_bottom, int(STANDARD_LABEL_HEIGHT * 0.42)))
+        mask_source = "patient_header"
+
+    safe_image = rectified.copy()
+    safe_image[:mask_bottom, :] = (0, 0, 0)
+
+    cv2.imwrite(rectified_output_path, rectified)
+    cv2.imwrite(safe_output_path, safe_image)
+    header_confidence = header_detection["confidence"] if header_detection is not None else 0.0
+    print(
+        "YOLO-OBB PDPA masking used "
+        f"(label={label_detection['confidence']:.3f}, "
+        f"header={header_confidence:.3f}, "
+        f"mask_bottom={mask_bottom}, source={mask_source})"
+    )
     return True, "OK"
 
 
@@ -2511,17 +2762,29 @@ def handle_image(event):
         return
 
     rectified_file_path = f"/tmp/{event.message.id}_rectified.jpg"
-    rectify_ok, rectify_message = rectify_label_image_for_ai(normalized_file_path, rectified_file_path)
-    if not rectify_ok:
-        print(f"Image rectification failed for {event.message.id}: {rectify_message}")
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=t(user_language, "generic_processing_error")))
-        for path in (temp_file_path, normalized_file_path, rectified_file_path):
-            if os.path.exists(path):
-                os.remove(path)
-        return
-
     safe_file_path = f"/tmp/{event.message.id}_safe.jpg"
-    pdpa_ok, pdpa_message = create_pdpa_safe_image(rectified_file_path, safe_file_path)
+    pdpa_ok, pdpa_message = create_yolo_obb_pdpa_safe_image(
+        normalized_file_path,
+        rectified_file_path,
+        safe_file_path,
+    )
+    if not pdpa_ok:
+        if pdpa_message != "yolo_obb_disabled":
+            print(f"YOLO-OBB PDPA fallback to OpenCV for {event.message.id}: {pdpa_message}")
+        rectify_ok, rectify_message = rectify_label_image_for_ai(
+            normalized_file_path,
+            rectified_file_path,
+            use_yolo_obb=False,
+        )
+        if not rectify_ok:
+            print(f"Image rectification failed for {event.message.id}: {rectify_message}")
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=t(user_language, "generic_processing_error")))
+            for path in (temp_file_path, normalized_file_path, rectified_file_path, safe_file_path):
+                if os.path.exists(path):
+                    os.remove(path)
+            return
+
+        pdpa_ok, pdpa_message = create_pdpa_safe_image(rectified_file_path, safe_file_path)
     if not pdpa_ok:
         print(f"⚠️ PDPA masking failed for {event.message.id}: {pdpa_message}")
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=t(user_language, "pdpa_masking_failed")))
@@ -2529,6 +2792,8 @@ def handle_image(event):
             if os.path.exists(path):
                 os.remove(path)
         return
+
+    save_upload_mask_debug_images(rectified_file_path, safe_file_path, event.message.id)
 
     # ==========================================
     # Phase 2: read only the PDPA-safe, lightly normalized image for Gemini.
@@ -2714,6 +2979,32 @@ def save_liff_mask_debug_image(source_path: str, upload_id: str) -> Path | None:
     except Exception as e:
         print(f"LIFF masked debug image save skipped for {upload_id}: {e}")
         return None
+
+
+def get_upload_mask_debug_dir() -> Path:
+    return Path(os.environ.get("UPLOAD_MASK_DEBUG_DIR", str(PROJECT_ROOT / "test")))
+
+
+def save_upload_mask_debug_images(rectified_path: str, safe_path: str, message_id: str) -> list[Path]:
+    saved_paths = []
+    try:
+        safe_message_id = "".join(ch if ch.isalnum() or ch in ("_", "-") else "_" for ch in message_id)
+        debug_dir = get_upload_mask_debug_dir()
+        debug_dir.mkdir(parents=True, exist_ok=True)
+
+        sources = (
+            (Path(rectified_path), debug_dir / f"{safe_message_id}_upload_rectified.jpg"),
+            (Path(safe_path), debug_dir / f"{safe_message_id}_upload_safe.jpg"),
+        )
+        for source, destination in sources:
+            if not source.exists():
+                continue
+            shutil.copy2(source, destination)
+            saved_paths.append(destination)
+    except Exception as e:
+        print(f"Upload masked debug images save skipped for {message_id}: {e}")
+
+    return saved_paths
 
 
 def require_liff_debug_token(token: str) -> None:

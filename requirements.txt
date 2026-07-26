@@ -8,3 +8,4 @@ google-genai
 supabase
 pytesseract==0.3.10
 pytz
+ultralytics>=8.3.0

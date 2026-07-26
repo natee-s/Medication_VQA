@@ -421,6 +421,188 @@ class LiffCameraTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("liff_header_not_masked", message)
             self.assertFalse(Path(output_path).exists())
 
+    def test_yolo_obb_rectification_warps_detected_quad_to_standard_label(self):
+        import main
+
+        class FakeObb:
+            xyxyxyxy = np.array([[[30, 20], [370, 35], [350, 250], [45, 230]]], dtype=np.float32)
+            conf = np.array([0.91], dtype=np.float32)
+            cls = np.array([0], dtype=np.float32)
+
+        class FakeResult:
+            obb = FakeObb()
+
+        class FakeModel:
+            def predict(self, **kwargs):
+                return [FakeResult()]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = str(Path(temp_dir) / "upload.jpg")
+            output_path = str(Path(temp_dir) / "rectified.jpg")
+            image = np.full((280, 420, 3), 240, dtype=np.uint8)
+            cv2.polylines(image, [FakeObb.xyxyxyxy[0].astype(np.int32)], True, (0, 0, 0), 3)
+            cv2.putText(image, "MYOXAN", (80, 130), cv2.FONT_HERSHEY_SIMPLEX, 1.4, (0, 0, 0), 4)
+            cv2.imwrite(input_path, image)
+
+            with patch.object(main, "get_yolo_obb_model", return_value=FakeModel()):
+                ok, message = main.rectify_label_image_with_yolo_obb(input_path, output_path)
+
+            self.assertTrue(ok, message)
+            rectified = cv2.imread(output_path)
+        self.assertIsNotNone(rectified)
+        self.assertEqual(rectified.shape[:2], (main.STANDARD_LABEL_HEIGHT, main.STANDARD_LABEL_WIDTH))
+
+    def test_yolo_obb_rectification_selects_label_class_not_header(self):
+        import main
+
+        class FakeObb:
+            xyxyxyxy = np.array(
+                [
+                    [[60, 35], [360, 35], [360, 80], [60, 80]],
+                    [[30, 20], [390, 20], [390, 280], [30, 280]],
+                ],
+                dtype=np.float32,
+            )
+            conf = np.array([0.99, 0.82], dtype=np.float32)
+            cls = np.array([1, 0], dtype=np.float32)
+
+        class FakeResult:
+            obb = FakeObb()
+
+        class FakeModel:
+            def predict(self, **kwargs):
+                return [FakeResult()]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = str(Path(temp_dir) / "upload.jpg")
+            output_path = str(Path(temp_dir) / "rectified.jpg")
+            image = np.full((320, 440, 3), 255, dtype=np.uint8)
+            cv2.rectangle(image, (30, 20), (390, 280), (0, 0, 0), 3)
+            cv2.putText(image, "HEADER", (70, 62), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 0), 2)
+            cv2.putText(image, "MYOXAN", (80, 170), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 0), 4)
+            cv2.imwrite(input_path, image)
+
+            with patch.object(main, "get_yolo_obb_model", return_value=FakeModel()):
+                ok, message = main.rectify_label_image_with_yolo_obb(input_path, output_path)
+
+            self.assertTrue(ok, message)
+            rectified = cv2.imread(output_path)
+            self.assertIsNotNone(rectified)
+            self.assertEqual(rectified.shape[:2], (main.STANDARD_LABEL_HEIGHT, main.STANDARD_LABEL_WIDTH))
+            self.assertLess(np.mean(rectified[:120, :] < 20), 0.25)
+
+    def test_yolo_obb_pdpa_masks_to_patient_header_bottom(self):
+        import main
+
+        class FakeObb:
+            xyxyxyxy = np.array(
+                [
+                    [[20, 20], [380, 20], [380, 280], [20, 280]],
+                    [[40, 30], [360, 30], [360, 80], [40, 80]],
+                ],
+                dtype=np.float32,
+            )
+            conf = np.array([0.95, 0.93], dtype=np.float32)
+            cls = np.array([0, 1], dtype=np.float32)
+
+        class FakeResult:
+            obb = FakeObb()
+
+        class FakeModel:
+            def predict(self, **kwargs):
+                return [FakeResult()]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = str(Path(temp_dir) / "upload.jpg")
+            rectified_path = str(Path(temp_dir) / "rectified.jpg")
+            safe_path = str(Path(temp_dir) / "safe.jpg")
+            image = np.full((300, 420, 3), 255, dtype=np.uint8)
+            cv2.rectangle(image, (20, 20), (380, 280), (0, 0, 0), 2)
+            cv2.putText(image, "PRIVATE", (55, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 0), 2)
+            cv2.putText(image, "MYOXAN", (65, 165), cv2.FONT_HERSHEY_SIMPLEX, 1.4, (0, 0, 0), 4)
+            cv2.imwrite(input_path, image)
+
+            with patch.object(main, "get_yolo_obb_model", return_value=FakeModel()):
+                ok, message = main.create_yolo_obb_pdpa_safe_image(input_path, rectified_path, safe_path)
+
+            self.assertTrue(ok, message)
+            safe_image = cv2.imread(safe_path)
+            self.assertIsNotNone(safe_image)
+            gray = cv2.cvtColor(safe_image, cv2.COLOR_BGR2GRAY)
+            self.assertGreater(np.mean(gray[:220, :] < 20), 0.98)
+            self.assertLess(np.mean(gray[340:520, :] < 20), 0.15)
+
+    def test_yolo_obb_pdpa_falls_back_to_top_quarter_without_header(self):
+        import main
+
+        class FakeObb:
+            xyxyxyxy = np.array([[[20, 20], [380, 20], [380, 280], [20, 280]]], dtype=np.float32)
+            conf = np.array([0.95], dtype=np.float32)
+            cls = np.array([0], dtype=np.float32)
+
+        class FakeResult:
+            obb = FakeObb()
+
+        class FakeModel:
+            def predict(self, **kwargs):
+                return [FakeResult()]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = str(Path(temp_dir) / "upload.jpg")
+            rectified_path = str(Path(temp_dir) / "rectified.jpg")
+            safe_path = str(Path(temp_dir) / "safe.jpg")
+            image = np.full((300, 420, 3), 255, dtype=np.uint8)
+            cv2.rectangle(image, (20, 20), (380, 280), (0, 0, 0), 2)
+            cv2.putText(image, "MYOXAN", (65, 165), cv2.FONT_HERSHEY_SIMPLEX, 1.4, (0, 0, 0), 4)
+            cv2.imwrite(input_path, image)
+
+            with patch.object(main, "get_yolo_obb_model", return_value=FakeModel()):
+                ok, message = main.create_yolo_obb_pdpa_safe_image(input_path, rectified_path, safe_path)
+
+            self.assertTrue(ok, message)
+            safe_image = cv2.imread(safe_path)
+            self.assertIsNotNone(safe_image)
+            gray = cv2.cvtColor(safe_image, cv2.COLOR_BGR2GRAY)
+            self.assertGreater(np.mean(gray[:main.PDPA_MASK_HEIGHT - 5, :] < 20), 0.98)
+            self.assertLess(np.mean(gray[main.PDPA_MASK_HEIGHT + 60:main.PDPA_MASK_HEIGHT + 220, :] < 20), 0.15)
+
+    def test_upload_mask_debug_images_are_saved_to_test_folder(self):
+        import main
+
+        old_debug_dir = os.environ.get("UPLOAD_MASK_DEBUG_DIR")
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                debug_dir = Path(temp_dir) / "test"
+                os.environ["UPLOAD_MASK_DEBUG_DIR"] = str(debug_dir)
+                rectified_path = Path(temp_dir) / "rectified.jpg"
+                safe_path = Path(temp_dir) / "safe.jpg"
+                rectified_path.write_bytes(b"rectified")
+                safe_path.write_bytes(b"safe")
+
+                saved_paths = main.save_upload_mask_debug_images(
+                    str(rectified_path),
+                    str(safe_path),
+                    "message/id:01",
+                )
+
+                self.assertEqual(len(saved_paths), 2)
+                self.assertEqual((debug_dir / "message_id_01_upload_rectified.jpg").read_bytes(), b"rectified")
+                self.assertEqual((debug_dir / "message_id_01_upload_safe.jpg").read_bytes(), b"safe")
+        finally:
+            if old_debug_dir is None:
+                os.environ.pop("UPLOAD_MASK_DEBUG_DIR", None)
+            else:
+                os.environ["UPLOAD_MASK_DEBUG_DIR"] = old_debug_dir
+
+    def test_rectify_label_image_uses_yolo_obb_before_opencv_fallback(self):
+        import main
+
+        with patch.object(main, "rectify_label_image_with_yolo_obb", return_value=(True, "OK")) as yolo_rectify:
+            ok, message = main.rectify_label_image_for_ai("input.jpg", "output.jpg")
+
+        self.assertTrue(ok, message)
+        yolo_rectify.assert_called_once_with("input.jpg", "output.jpg")
+
     def test_liff_processing_uses_verified_masked_upload_without_full_roi_pipeline(self):
         import main
 

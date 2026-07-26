@@ -1,0 +1,6 @@
+path: D:/4.Intern/2. Dataset/DrugLabelOBB
+train: images/train
+val: images/val
+
+names:
+  0: drug_label

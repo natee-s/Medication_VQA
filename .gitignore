@@ -22,6 +22,9 @@ htmlcov/
 debug_pdpa/
 debug_thresh.jpg
 tests/debug_thresh.jpg
+runs/
+*.pt
+*.onnx
 
 # OS / editor files
 .DS_Store
