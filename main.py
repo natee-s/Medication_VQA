@@ -2462,7 +2462,7 @@ def clean_medicine_candidate(value) -> str:
     candidate = re.sub(r"\b\d+\s*'?S\b", " ", candidate, flags=re.IGNORECASE)
     candidate = re.sub(r"\b(?:CAPSULES?|TABLETS?|TABS?|CAPS?|SYRUP|SUSPENSION)\b", " ", candidate, flags=re.IGNORECASE)
     candidate = re.sub(r"\s+", " ", candidate)
-    return candidate.strip(" ,;:-")
+    return candidate.strip(" ,;:-.")
 
 
 def normalize_medicine_match_text(value) -> str:
@@ -2759,7 +2759,7 @@ def handle_image(event):
                     line_bot_api,
                     user_id,
                     event.reply_token,
-                    TextSendMessage(text=t(user_language, "generic_processing_error")),
+                    TextSendMessage(text=t(user_language, "image_processing_error")),
                 )
             except Exception as reply_error:
                 print(f"Failed to send image error fallback for {user_id}: {reply_error}")
@@ -2804,7 +2804,7 @@ def _handle_image_impl(event, user_language: str):
     normalize_ok, normalize_message = normalize_label_image_for_ai(temp_file_path, normalized_file_path)
     if not normalize_ok:
         print(f"Image preprocessing failed for {event.message.id}: {normalize_message}")
-        reply_or_push_message(line_bot_api, user_id, event.reply_token, TextSendMessage(text=t(user_language, "generic_processing_error")))
+        reply_or_push_message(line_bot_api, user_id, event.reply_token, TextSendMessage(text=t(user_language, "image_processing_error")))
         for path in (temp_file_path, normalized_file_path):
             if os.path.exists(path):
                 os.remove(path)
@@ -2827,7 +2827,7 @@ def _handle_image_impl(event, user_language: str):
         )
         if not rectify_ok:
             print(f"Image rectification failed for {event.message.id}: {rectify_message}")
-            reply_or_push_message(line_bot_api, user_id, event.reply_token, TextSendMessage(text=t(user_language, "generic_processing_error")))
+            reply_or_push_message(line_bot_api, user_id, event.reply_token, TextSendMessage(text=t(user_language, "image_processing_error")))
             for path in (temp_file_path, normalized_file_path, rectified_file_path, safe_file_path):
                 if os.path.exists(path):
                     os.remove(path)
@@ -2859,6 +2859,78 @@ def _handle_image_impl(event, user_language: str):
     # เฟส 3: เรียกใช้งาน Gemini + ค้นหาข้อมูลจริง (RAG)
     # ==========================================
     try:
+        try:
+            match_result = extract_label_ocr_and_match(
+                image_bytes,
+                user_language,
+                source_label=f"LINE upload {event.message.id}",
+            )
+        except json.JSONDecodeError:
+            reply_or_push_message(
+                line_bot_api,
+                user_id,
+                event.reply_token,
+                TextSendMessage(text=t(user_language, "ai_format_error")),
+            )
+            return
+        status = match_result.get("status")
+
+        if status == "rotated":
+            reply_or_push_message(
+                line_bot_api,
+                user_id,
+                event.reply_token,
+                TextSendMessage(text=t(user_language, "ocr_rotated_image")),
+            )
+            return
+
+        if status == "unclear":
+            reply_or_push_message(
+                line_bot_api,
+                user_id,
+                event.reply_token,
+                TextSendMessage(text=t(user_language, "ocr_unclear_drug_name")),
+            )
+            return
+
+        if status == "not_found":
+            reply_or_push_message(
+                line_bot_api,
+                user_id,
+                event.reply_token,
+                TextSendMessage(text=t(user_language, "ocr_no_database_match", drug=match_result.get("matched_keyword") or "")),
+            )
+            return
+
+        if status != "ok":
+            raise RuntimeError(f"Unexpected OCR/RAG status: {status}")
+
+        db_data = match_result["db_data"]
+        display_data = build_medicine_label_display_data(ai_client, db_data, user_language)
+        generic_name = display_data.get("generic_name") or t(user_language, "not_specified")
+        instruction_for_reminder = db_data.get("instruction_time") or ""
+        time_payload, meal_timing = build_reminder_payload_from_instruction(instruction_for_reminder)
+
+        print(f"OCR/RAG LINE upload {event.message.id}: reminder_payload={time_payload} meal_timing={meal_timing}")
+
+        flex_bubble = build_medicine_label_flex_reply(
+            user_language,
+            display_data,
+            time_payload,
+            meal_timing,
+        )
+
+        reply_or_push_message(
+            line_bot_api,
+            user_id,
+            event.reply_token,
+            FlexSendMessage(
+                alt_text=t(user_language, "medicine_label_alt", drug=generic_name),
+                contents=flex_bubble,
+            ),
+        )
+        return
+
         response = ai_client.models.generate_content(
             model='gemini-2.5-flash',
             contents=[
@@ -2963,8 +3035,9 @@ def _handle_image_impl(event, user_language: str):
             reply_or_push_message(line_bot_api, user_id, event.reply_token, TextSendMessage(text=t(user_language, "ai_format_error")))
             
     except Exception as e:
+        logging.exception("Image OCR/RAG processing failed for %s", event.message.id)
         print(f"⚠️ Error in image processing: {e}")
-        reply_or_push_message(line_bot_api, user_id, event.reply_token, TextSendMessage(text=t(user_language, "generic_processing_error")))    
+        reply_or_push_message(line_bot_api, user_id, event.reply_token, TextSendMessage(text=t(user_language, "image_processing_error")))
 
 OCR_MEDICINE_LABEL_PROMPT = """
 You are a deterministic OCR system for pharmacy medicine labels.
@@ -3088,6 +3161,56 @@ def parse_ai_json_response(raw_text: str) -> dict:
     return json.loads(cleaned_text)
 
 
+def extract_label_ocr_and_match(image_bytes: bytes, user_language: str, source_label: str = "image") -> dict:
+    language_instruction = build_language_instruction(user_language)
+    response = ai_client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[
+            types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
+            OCR_MEDICINE_LABEL_PROMPT,
+            f"{language_instruction} Keep JSON keys exactly as specified; do not translate medicine names.",
+        ],
+        config=types.GenerateContentConfig(
+            temperature=0,
+            response_mime_type="application/json",
+        ),
+    )
+    data = parse_ai_json_response(response.text)
+
+    if data.get("error") == "rotated":
+        print(f"OCR/RAG {source_label}: rotated image")
+        return {"status": "rotated", "ocr_data": data}
+
+    search_candidates = extract_ocr_search_candidates(data)
+    print(f"OCR/RAG {source_label}: candidates={search_candidates}")
+    if not search_candidates:
+        return {"status": "unclear", "ocr_data": data}
+
+    db_data, matched_keyword = search_medicine_candidates_in_db(search_candidates, data)
+    if not db_data:
+        print(f"OCR/RAG {source_label}: no DB match for {matched_keyword or search_candidates[0]}")
+        return {
+            "status": "not_found",
+            "ocr_data": data,
+            "search_candidates": search_candidates,
+            "matched_keyword": matched_keyword or search_candidates[0],
+        }
+
+    print(
+        "OCR/RAG "
+        f"{source_label}: selected trade={db_data.get('trade_name') or '-'} "
+        f"generic={db_data.get('generic_name') or '-'} "
+        f"label={db_data.get('label_name') or db_data.get('source_row_number') or '-'}"
+    )
+    return {
+        "status": "ok",
+        "ocr_data": data,
+        "db_data": db_data,
+        "search_candidates": search_candidates,
+        "matched_keyword": matched_keyword or search_candidates[0],
+    }
+
+
 def build_reminder_payload_from_instruction(instruction_for_reminder: str) -> tuple[str, str]:
     time_list = []
     if instruction_for_reminder:
@@ -3174,7 +3297,7 @@ def build_liff_label_result_message(user_id: str, source_image_path: str, upload
         return TextSendMessage(text=t(user_language, "ai_format_error"))
     except Exception as e:
         print(f"LIFF image processing failed for {upload_id}: {e}")
-        return TextSendMessage(text=t(user_language, "generic_processing_error"))
+        return TextSendMessage(text=t(user_language, "image_processing_error"))
     finally:
         cleanup_temp_paths(intermediate_paths)
 
@@ -3194,7 +3317,7 @@ def process_liff_uploaded_label_image(line_user_id: str, image_path: str, upload
         try:
             line_bot_api.push_message(
                 line_user_id,
-                TextSendMessage(text=t(user_language, "generic_processing_error")),
+                TextSendMessage(text=t(user_language, "image_processing_error")),
             )
         except Exception as push_error:
             print(f"LIFF fallback push failed for {upload_id}: {push_error}")

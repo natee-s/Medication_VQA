@@ -1,4 +1,5 @@
 import os
+import json
 import sys
 import tempfile
 import types
@@ -634,6 +635,46 @@ class LiffCameraTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result)
         reply_or_push.assert_called_once()
         self.assertEqual(reply_or_push.call_args.args[1], "U123456789")
+        self.assertEqual(reply_or_push.call_args.args[3].text, main.t("th", "image_processing_error"))
+
+    def test_extract_label_ocr_and_match_uses_candidate_ranking(self):
+        import main
+
+        class FakeResponse:
+            text = json.dumps(
+                {
+                    "error": None,
+                    "trade_name": "MUCOLID 30MG.10 S.",
+                    "generic_name": "AMBROXOL 30 mg",
+                    "strength": "30 mg",
+                    "dosage_frequency": "วันละ 3 ครั้ง",
+                    "instruction_time": "หลังอาหาร เช้า-กลางวัน-เย็น",
+                    "search_keyword": "AMBROXOL",
+                    "search_candidates": ["AMBROXOL", "MUCOLID"],
+                    "confidence": "high",
+                }
+            )
+
+        db_row = {
+            "trade_name": "MUCOLID 30MG.10 S.",
+            "generic_name": "AMBROXOL 30 mg",
+            "dosage_frequency": "วันละ 3 ครั้ง",
+            "instruction_time": "หลังอาหาร เช้า-กลางวัน-เย็น",
+        }
+
+        with (
+            patch.object(main.ai_client.models, "generate_content", return_value=FakeResponse()) as generate_content,
+            patch.object(main, "search_medicine_candidates_in_db", return_value=(db_row, "AMBROXOL")) as search_candidates,
+        ):
+            result = main.extract_label_ocr_and_match(b"image-bytes", "th", source_label="unit-test")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["db_data"], db_row)
+        self.assertEqual(result["matched_keyword"], "AMBROXOL")
+        self.assertIn("config", generate_content.call_args.kwargs)
+        search_candidates.assert_called_once()
+        self.assertEqual(search_candidates.call_args.args[0], ["AMBROXOL", "MUCOLID"])
+        self.assertEqual(search_candidates.call_args.args[1]["trade_name"], "MUCOLID 30MG.10 S.")
 
     def test_rectify_label_image_uses_yolo_obb_before_opencv_fallback(self):
         import main
