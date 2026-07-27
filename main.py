@@ -50,6 +50,7 @@ PDPA_MASK_RATIO = 0.25
 LIFF_GUIDELINE_MASK_RATIO = PDPA_MASK_RATIO
 PDPA_MASK_HEIGHT = int(STANDARD_LABEL_HEIGHT * PDPA_MASK_RATIO)
 MIN_LABEL_AREA_RATIO = 0.08
+QC_MIN_OBJECT_AREA_RATIO = 0.04
 YOLO_LABEL_CLASS_ID = 0
 YOLO_HEADER_CLASS_ID = 1
 _yolo_obb_model = None
@@ -120,7 +121,7 @@ def check_image_quality(file_path):
         print(f"🔍 [TEST] ค่าพื้นที่วัตถุ: {object_area}, ค่าพื้นที่ภาพรวม: {total_area}, สัดส่วน: {object_area/total_area:.3f}")
         
         object_area_ratio = object_area / total_area
-        if object_area_ratio < MIN_LABEL_AREA_RATIO:
+        if object_area_ratio < QC_MIN_OBJECT_AREA_RATIO:
             return False, "⚠️ รูปภาพอยู่ไกลเกินไป กรุณาถ่ายใกล้ๆ ให้ฉลากยาเต็มกรอบภาพครับ"
 
     # 6. Auto-Deskew (แก้เอียงอัตโนมัติ 1-15 องศา)
