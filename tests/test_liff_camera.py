@@ -594,6 +594,47 @@ class LiffCameraTests(unittest.IsolatedAsyncioTestCase):
             else:
                 os.environ["UPLOAD_MASK_DEBUG_DIR"] = old_debug_dir
 
+    def test_yolo_obb_is_disabled_on_render_unless_explicitly_enabled(self):
+        import main
+
+        old_render = os.environ.get("RENDER")
+        old_enabled = os.environ.get("YOLO_OBB_ENABLED")
+        try:
+            os.environ["RENDER"] = "true"
+            os.environ.pop("YOLO_OBB_ENABLED", None)
+            self.assertFalse(main.is_yolo_obb_enabled())
+
+            os.environ["YOLO_OBB_ENABLED"] = "true"
+            self.assertTrue(main.is_yolo_obb_enabled())
+        finally:
+            if old_render is None:
+                os.environ.pop("RENDER", None)
+            else:
+                os.environ["RENDER"] = old_render
+            if old_enabled is None:
+                os.environ.pop("YOLO_OBB_ENABLED", None)
+            else:
+                os.environ["YOLO_OBB_ENABLED"] = old_enabled
+
+    def test_image_handler_sends_fallback_when_processing_raises(self):
+        import main
+
+        event = types.SimpleNamespace(
+            source=types.SimpleNamespace(user_id="U123456789"),
+            reply_token="reply-token",
+        )
+
+        with (
+            patch.object(main, "get_user_language", return_value="th"),
+            patch.object(main, "_handle_image_impl", side_effect=RuntimeError("boom")),
+            patch.object(main, "reply_or_push_message") as reply_or_push,
+        ):
+            result = main.handle_image(event)
+
+        self.assertIsNone(result)
+        reply_or_push.assert_called_once()
+        self.assertEqual(reply_or_push.call_args.args[1], "U123456789")
+
     def test_rectify_label_image_uses_yolo_obb_before_opencv_fallback(self):
         import main
 

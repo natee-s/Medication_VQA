@@ -686,6 +686,26 @@ def get_yolo_obb_image_size() -> int:
         return 1024
 
 
+def is_yolo_obb_enabled() -> bool:
+    configured_value = os.environ.get("YOLO_OBB_ENABLED")
+    if configured_value is not None:
+        return configured_value.strip().lower() in ("1", "true", "yes", "on")
+
+    # Render free/small instances can be killed by the first torch/Ultralytics load.
+    # Keep production responsive unless YOLO is explicitly enabled there.
+    render_env_keys = (
+        "RENDER",
+        "RENDER_SERVICE_ID",
+        "RENDER_SERVICE_NAME",
+        "RENDER_EXTERNAL_URL",
+        "RENDER_INSTANCE_ID",
+    )
+    if any(os.environ.get(key) for key in render_env_keys):
+        return False
+
+    return True
+
+
 def get_yolo_obb_label_class_id() -> int:
     try:
         return int(os.environ.get("YOLO_OBB_LABEL_CLASS_ID", str(YOLO_LABEL_CLASS_ID)))
@@ -702,6 +722,9 @@ def get_yolo_obb_header_class_id() -> int:
 
 def get_yolo_obb_model():
     global _yolo_obb_model, _yolo_obb_model_path
+
+    if not is_yolo_obb_enabled():
+        return None
 
     model_path = get_yolo_obb_model_path()
     if not model_path:
@@ -2721,8 +2744,30 @@ def handle_follow(event):
 
 @handler.add(MessageEvent, message=ImageMessage)
 def handle_image(event):
+    user_id = getattr(event.source, "user_id", "")
+    user_language = DEFAULT_LANGUAGE
+    try:
+        if user_id:
+            user_language = get_user_language(user_id)
+        return _handle_image_impl(event, user_language)
+    except Exception as e:
+        logging.exception("Unhandled image message error for %s", user_id or "unknown")
+        print(f"Unhandled image message error for {user_id or 'unknown'}: {e}")
+        if user_id:
+            try:
+                reply_or_push_message(
+                    line_bot_api,
+                    user_id,
+                    event.reply_token,
+                    TextSendMessage(text=t(user_language, "generic_processing_error")),
+                )
+            except Exception as reply_error:
+                print(f"Failed to send image error fallback for {user_id}: {reply_error}")
+        return None
+
+
+def _handle_image_impl(event, user_language: str):
     user_id = event.source.user_id
-    user_language = get_user_language(user_id)
     language_instruction = build_language_instruction(user_language)
 
     # --- ส่งสถานะ "กำลังพิมพ์..." (Loading Animation) ---
@@ -2732,7 +2777,10 @@ def handle_image(event):
         "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"
     }
     data_loading = {"chatId": user_id, "loadingSeconds": 30}
-    requests.post(url, headers=headers, json=data_loading)
+    try:
+        requests.post(url, headers=headers, json=data_loading, timeout=5)
+    except Exception as e:
+        print(f"Loading animation skipped for {user_id}: {e}")
 
     # --- ดาวน์โหลดรูปภาพจาก LINE ---
     message_content = line_bot_api.get_message_content(event.message.id)
@@ -2747,7 +2795,7 @@ def handle_image(event):
     # ==========================================
     is_good, qc_message = check_image_quality(temp_file_path)
     if not is_good:
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=qc_message))
+        reply_or_push_message(line_bot_api, user_id, event.reply_token, TextSendMessage(text=qc_message))
         if os.path.exists(temp_file_path):
             os.remove(temp_file_path)
         return
@@ -2756,7 +2804,7 @@ def handle_image(event):
     normalize_ok, normalize_message = normalize_label_image_for_ai(temp_file_path, normalized_file_path)
     if not normalize_ok:
         print(f"Image preprocessing failed for {event.message.id}: {normalize_message}")
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=t(user_language, "generic_processing_error")))
+        reply_or_push_message(line_bot_api, user_id, event.reply_token, TextSendMessage(text=t(user_language, "generic_processing_error")))
         for path in (temp_file_path, normalized_file_path):
             if os.path.exists(path):
                 os.remove(path)
@@ -2779,7 +2827,7 @@ def handle_image(event):
         )
         if not rectify_ok:
             print(f"Image rectification failed for {event.message.id}: {rectify_message}")
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=t(user_language, "generic_processing_error")))
+            reply_or_push_message(line_bot_api, user_id, event.reply_token, TextSendMessage(text=t(user_language, "generic_processing_error")))
             for path in (temp_file_path, normalized_file_path, rectified_file_path, safe_file_path):
                 if os.path.exists(path):
                     os.remove(path)
@@ -2788,7 +2836,7 @@ def handle_image(event):
         pdpa_ok, pdpa_message = create_pdpa_safe_image(rectified_file_path, safe_file_path)
     if not pdpa_ok:
         print(f"⚠️ PDPA masking failed for {event.message.id}: {pdpa_message}")
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=t(user_language, "pdpa_masking_failed")))
+        reply_or_push_message(line_bot_api, user_id, event.reply_token, TextSendMessage(text=t(user_language, "pdpa_masking_failed")))
         for path in (temp_file_path, normalized_file_path, rectified_file_path, safe_file_path):
             if os.path.exists(path):
                 os.remove(path)
@@ -2840,15 +2888,17 @@ def handle_image(event):
             
             # 🚨 ดักจับ Error รูปกลับหัว
             if data.get("error") == "rotated":
-                line_bot_api.reply_message(
+                reply_or_push_message(
+                    line_bot_api,
+                    user_id,
                     event.reply_token,
-                    TextSendMessage(text=t(user_language, "ocr_rotated_image"))
+                    TextSendMessage(text=t(user_language, "ocr_rotated_image")),
                 )
                 return
 
             search_keyword = data.get("search_keyword")
             if not search_keyword:
-                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=t(user_language, "ocr_unclear_drug_name")))
+                reply_or_push_message(line_bot_api, user_id, event.reply_token, TextSendMessage(text=t(user_language, "ocr_unclear_drug_name")))
                 return
 
             # ----------------------------------------------------
@@ -2857,9 +2907,11 @@ def handle_image(event):
             db_data = search_medicine_in_db(search_keyword)
 
             if not db_data:
-                line_bot_api.reply_message(
-                    event.reply_token, 
-                    TextSendMessage(text=t(user_language, "ocr_no_database_match", drug=search_keyword))
+                reply_or_push_message(
+                    line_bot_api,
+                    user_id,
+                    event.reply_token,
+                    TextSendMessage(text=t(user_language, "ocr_no_database_match", drug=search_keyword)),
                 )
                 return
             
@@ -2908,11 +2960,11 @@ def handle_image(event):
             )
 
         except json.JSONDecodeError:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=t(user_language, "ai_format_error")))
+            reply_or_push_message(line_bot_api, user_id, event.reply_token, TextSendMessage(text=t(user_language, "ai_format_error")))
             
     except Exception as e:
         print(f"⚠️ Error in image processing: {e}")
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=t(user_language, "generic_processing_error")))    
+        reply_or_push_message(line_bot_api, user_id, event.reply_token, TextSendMessage(text=t(user_language, "generic_processing_error")))    
 
 OCR_MEDICINE_LABEL_PROMPT = """
 You are a deterministic OCR system for pharmacy medicine labels.
