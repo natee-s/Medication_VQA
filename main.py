@@ -49,6 +49,8 @@ STANDARD_LABEL_HEIGHT = 1000
 PDPA_MASK_RATIO = 0.25
 LIFF_GUIDELINE_MASK_RATIO = PDPA_MASK_RATIO
 PDPA_MASK_HEIGHT = int(STANDARD_LABEL_HEIGHT * PDPA_MASK_RATIO)
+MAX_UPLOAD_IMAGE_SIZE_MB = 3.0
+TARGET_UPLOAD_IMAGE_SIZE_MB = 2.8
 MIN_LABEL_AREA_RATIO = 0.08
 QC_MIN_OBJECT_AREA_RATIO = 0.04
 YOLO_LABEL_CLASS_ID = 0
@@ -60,11 +62,61 @@ _yolo_obb_model_path = None
 # ==========================================
 # 1. ฟังก์ชันสร้างฟังก์ชันด่านหน้า (Gatekeeper)
 # ==========================================
+def prepare_upload_image_for_qc(file_path: str) -> tuple[bool, str]:
+    """Resize/compress the temporary upload before QC so large phone photos can still pass."""
+    if not os.path.exists(file_path):
+        return False, "file_not_found"
+
+    file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+    if file_size_mb <= MAX_UPLOAD_IMAGE_SIZE_MB:
+        return True, "OK"
+
+    image = cv2.imread(file_path)
+    if image is None:
+        return False, "image_read_error"
+
+    height, width = image.shape[:2]
+    if height < 1 or width < 1:
+        return False, "empty_image"
+
+    working = image
+    max_side = max(width, height)
+    if max_side > 2200:
+        scale = 2200.0 / max_side
+        working = cv2.resize(working, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+
+    for _ in range(4):
+        for quality in (92, 88, 84, 80, 76):
+            ok = cv2.imwrite(file_path, working, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+            if not ok:
+                return False, "image_write_error"
+
+            compressed_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+            if compressed_size_mb <= TARGET_UPLOAD_IMAGE_SIZE_MB:
+                print(
+                    "UPLOAD_IMAGE_COMPRESSED "
+                    f"from={file_size_mb:.1f}MB to={compressed_size_mb:.1f}MB "
+                    f"quality={quality} shape={working.shape[1]}x{working.shape[0]}"
+                )
+                return True, "OK"
+
+        next_width = int(working.shape[1] * 0.88)
+        next_height = int(working.shape[0] * 0.88)
+        if next_width < 900 or next_height < 600:
+            break
+        working = cv2.resize(working, (next_width, next_height), interpolation=cv2.INTER_AREA)
+
+    final_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+    if final_size_mb <= MAX_UPLOAD_IMAGE_SIZE_MB:
+        return True, "OK"
+    return False, f"image_too_large_after_compression:{final_size_mb:.1f}MB"
+
+
 def check_image_quality(file_path):
     # 1. ตรวจสอบขนาดไฟล์ (ไม่เกิน 3MB)
     file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
     print(f"🔍 [TEST] ขนาดไฟล์รูปนี้คือ: {file_size_mb:.1f} MB")
-    if file_size_mb > 3.0:
+    if file_size_mb > MAX_UPLOAD_IMAGE_SIZE_MB:
         return False, f"⚠️ รูปภาพมีขนาดใหญ่เกินไป ({file_size_mb:.1f} MB) กรุณาส่งรูปไม่เกิน 3 MB ครับ หรือถ่ายผ่านกล้องของ LINE ได้เลยครับ"
 
     img = cv2.imread(file_path)
@@ -309,8 +361,9 @@ def _estimate_horizontal_skew_angle(image: np.ndarray) -> float | None:
     if lines is None:
         return None
 
+    line_segments = np.asarray(lines).reshape(-1, 4)
     candidates = []
-    for x1, y1, x2, y2 in lines[:, 0]:
+    for x1, y1, x2, y2 in line_segments:
         dx = x2 - x1
         dy = y2 - y1
         if dx == 0:
@@ -455,6 +508,146 @@ def _warp_label_quad_to_standard(image: np.ndarray, quad: np.ndarray) -> tuple[n
         borderMode=cv2.BORDER_REPLICATE,
     )
     return rectified, matrix
+
+
+def _warp_label_quad_to_standard_with_header(
+    image: np.ndarray,
+    label_quad: np.ndarray,
+    header_quad: np.ndarray | None = None,
+) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None, str]:
+    ordered = _order_quad_points(label_quad)
+    width_a = np.linalg.norm(ordered[2] - ordered[3])
+    width_b = np.linalg.norm(ordered[1] - ordered[0])
+    height_a = np.linalg.norm(ordered[1] - ordered[2])
+    height_b = np.linalg.norm(ordered[0] - ordered[3])
+    source_width = int(max(width_a, width_b))
+    source_height = int(max(height_a, height_b))
+    if source_width < 300 or source_height < 160:
+        return None, None, None, "too_small"
+
+    destination = np.array(
+        [
+            [0, 0],
+            [STANDARD_LABEL_WIDTH - 1, 0],
+            [STANDARD_LABEL_WIDTH - 1, STANDARD_LABEL_HEIGHT - 1],
+            [0, STANDARD_LABEL_HEIGHT - 1],
+        ],
+        dtype=np.float32,
+    )
+
+    best = None
+    for shift in range(4):
+        source = np.roll(ordered, -shift, axis=0).astype(np.float32)
+        matrix = cv2.getPerspectiveTransform(source, destination)
+        transformed_header = None
+        score = 0.0
+
+        if header_quad is not None:
+            transformed_header = cv2.perspectiveTransform(
+                header_quad.reshape(1, 4, 2).astype(np.float32),
+                matrix,
+            ).reshape(4, 2)
+            score = _score_rectified_header_position(transformed_header)
+        else:
+            score = 1.0 if shift == 0 else 0.0
+
+        if best is None or score > best["score"]:
+            best = {
+                "shift": shift,
+                "matrix": matrix,
+                "transformed_header": transformed_header,
+                "score": score,
+            }
+
+    if best is None:
+        return None, None, None, "no_candidate"
+
+    rectified = cv2.warpPerspective(
+        image,
+        best["matrix"],
+        (STANDARD_LABEL_WIDTH, STANDARD_LABEL_HEIGHT),
+        borderMode=cv2.BORDER_REPLICATE,
+    )
+    return rectified, best["matrix"], best["transformed_header"], f"shift_{best['shift']}"
+
+
+def _score_rectified_header_position(header_quad: np.ndarray) -> float:
+    x_min = float(np.min(header_quad[:, 0]))
+    x_max = float(np.max(header_quad[:, 0]))
+    y_min = float(np.min(header_quad[:, 1]))
+    y_max = float(np.max(header_quad[:, 1]))
+
+    header_width = max(1.0, x_max - x_min)
+    header_height = max(1.0, y_max - y_min)
+    center_x = (x_min + x_max) / 2.0
+    center_y = (y_min + y_max) / 2.0
+
+    center_y_ratio = center_y / STANDARD_LABEL_HEIGHT
+    width_ratio = header_width / STANDARD_LABEL_WIDTH
+    height_ratio = header_height / STANDARD_LABEL_HEIGHT
+    horizontal_ratio = header_width / header_height
+    center_x_penalty = abs((center_x / STANDARD_LABEL_WIDTH) - 0.5)
+    out_of_bounds = max(0.0, -x_min) + max(0.0, x_max - STANDARD_LABEL_WIDTH)
+    out_of_bounds += max(0.0, -y_min) + max(0.0, y_max - STANDARD_LABEL_HEIGHT)
+
+    score = 0.0
+    score += (1.0 - min(max(center_y_ratio, 0.0), 1.0)) * 4.0
+    score += min(horizontal_ratio, 5.0) * 0.9
+    score += min(width_ratio / 0.45, 1.0) * 1.2
+    score -= center_x_penalty * 1.5
+    score -= min(out_of_bounds / 250.0, 3.0)
+
+    if center_y_ratio > 0.48:
+        score -= 4.0
+    if horizontal_ratio < 1.4:
+        score -= 2.0
+    if height_ratio > 0.42:
+        score -= 1.0
+    return score
+
+
+def _header_mask_bottom_from_quad(header_quad: np.ndarray) -> tuple[int | None, str]:
+    x_min = float(np.min(header_quad[:, 0]))
+    x_max = float(np.max(header_quad[:, 0]))
+    y_min = float(np.min(header_quad[:, 1]))
+    y_max = float(np.max(header_quad[:, 1]))
+
+    header_width = max(1.0, x_max - x_min)
+    header_height = max(1.0, y_max - y_min)
+    width_ratio = header_width / STANDARD_LABEL_WIDTH
+    height_ratio = header_height / STANDARD_LABEL_HEIGHT
+    center_y_ratio = ((y_min + y_max) / 2.0) / STANDARD_LABEL_HEIGHT
+    horizontal_ratio = header_width / header_height
+
+    if center_y_ratio > 0.36:
+        return None, "header_not_top"
+    if width_ratio < 0.35:
+        return None, "header_too_narrow"
+    if horizontal_ratio < 1.2:
+        return None, "header_not_horizontal"
+    if height_ratio > 0.34:
+        return None, "header_too_tall"
+
+    padding = max(12, int(STANDARD_LABEL_HEIGHT * 0.015))
+    mask_bottom = int(np.ceil(y_max)) + padding
+    min_bottom = int(STANDARD_LABEL_HEIGHT * 0.18)
+    max_bottom = int(STANDARD_LABEL_HEIGHT * 0.34)
+    return max(min_bottom, min(mask_bottom, max_bottom)), "patient_header"
+
+
+def _fallback_header_mask_bottom_from_divider(image: np.ndarray) -> tuple[int, str]:
+    default_bottom = max(1, min(int(STANDARD_LABEL_HEIGHT * PDPA_MASK_RATIO), STANDARD_LABEL_HEIGHT))
+    divider_y = _find_upper_divider_y_on_standard_label(image)
+    if divider_y is None:
+        return default_bottom, "fallback_ratio"
+
+    min_bottom = int(STANDARD_LABEL_HEIGHT * 0.12)
+    max_bottom = int(STANDARD_LABEL_HEIGHT * 0.32)
+    if not (min_bottom <= divider_y <= max_bottom):
+        return default_bottom, "fallback_ratio"
+
+    padding = max(10, int(STANDARD_LABEL_HEIGHT * 0.012))
+    return max(min_bottom, min(divider_y + padding, max_bottom)), "divider"
 
 
 def _extract_yolo_obb_detections(results) -> list[dict]:
@@ -778,7 +971,8 @@ def _find_upper_divider_y_on_standard_label(image: np.ndarray) -> int | None:
     candidates = []
     min_y = int(height * 0.10)
     max_y = int(height * 0.42)
-    for x1, y1, x2, y2 in lines[:, 0]:
+    line_segments = np.asarray(lines).reshape(-1, 4)
+    for x1, y1, x2, y2 in line_segments:
         dx = x2 - x1
         dy = y2 - y1
         if dx == 0:
@@ -787,7 +981,7 @@ def _find_upper_divider_y_on_standard_label(image: np.ndarray) -> int | None:
         length = float(np.hypot(dx, dy))
         angle = float(np.degrees(np.arctan2(dy, dx)))
         y_mid = int(round((y1 + y2) / 2))
-        if abs(angle) > 7.0:
+        if abs(angle) > 14.0:
             continue
         if y_mid < min_y or y_mid > max_y:
             continue
@@ -1226,23 +1420,41 @@ def create_yolo_obb_pdpa_safe_image(
     if label_detection is None:
         return False, "yolo_obb_no_label"
 
-    rectified, transform_matrix = _warp_label_quad_to_standard(image, label_detection["quad"])
+    header_detection = _select_yolo_obb_detection(detections, get_yolo_obb_header_class_id())
+    header_quad = header_detection["quad"] if header_detection is not None else None
+    rectified, transform_matrix, transformed_header, orientation_source = _warp_label_quad_to_standard_with_header(
+        image,
+        label_detection["quad"],
+        header_quad,
+    )
     if rectified is None or rectified.size == 0 or transform_matrix is None:
         return False, "yolo_obb_empty_warp"
 
-    header_detection = _select_yolo_obb_detection(detections, get_yolo_obb_header_class_id())
     mask_source = "fallback_ratio"
-    mask_bottom = max(1, min(int(STANDARD_LABEL_HEIGHT * PDPA_MASK_RATIO), STANDARD_LABEL_HEIGHT))
-    if header_detection is not None:
-        header_quad = header_detection["quad"].reshape(1, 4, 2).astype(np.float32)
-        transformed_header = cv2.perspectiveTransform(header_quad, transform_matrix).reshape(4, 2)
-        padding = max(12, int(STANDARD_LABEL_HEIGHT * 0.015))
-        mask_bottom = int(np.ceil(np.max(transformed_header[:, 1]))) + padding
-        mask_bottom = max(1, min(mask_bottom, int(STANDARD_LABEL_HEIGHT * 0.42)))
-        mask_source = "patient_header"
+    mask_bottom, mask_source = _fallback_header_mask_bottom_from_divider(rectified)
+    mask_polygon = None
+    if transformed_header is not None:
+        header_mask_bottom, header_mask_source = _header_mask_bottom_from_quad(transformed_header)
+        if header_mask_bottom is not None:
+            mask_bottom = header_mask_bottom
+            mask_source = header_mask_source
+        elif header_mask_source == "header_too_tall":
+            mask_bottom = int(STANDARD_LABEL_HEIGHT * 0.26)
+            clipped_header = transformed_header.copy()
+            clipped_header[:, 0] = np.clip(clipped_header[:, 0], 0, STANDARD_LABEL_WIDTH - 1)
+            clipped_header[:, 1] = np.clip(clipped_header[:, 1], 0, mask_bottom)
+            mask_polygon = np.round(clipped_header).astype(np.int32)
+            mask_source = "clipped_header_polygon_after_header_too_tall"
+        else:
+            fallback_bottom, fallback_source = _fallback_header_mask_bottom_from_divider(rectified)
+            mask_bottom = fallback_bottom
+            mask_source = f"{fallback_source}_after_{header_mask_source}"
 
     safe_image = rectified.copy()
-    safe_image[:mask_bottom, :] = (0, 0, 0)
+    if mask_polygon is not None:
+        cv2.fillPoly(safe_image, [mask_polygon], (0, 0, 0))
+    else:
+        safe_image[:mask_bottom, :] = (0, 0, 0)
 
     cv2.imwrite(rectified_output_path, rectified)
     cv2.imwrite(safe_output_path, safe_image)
@@ -1251,9 +1463,82 @@ def create_yolo_obb_pdpa_safe_image(
         "YOLO-OBB PDPA masking used "
         f"(label={label_detection['confidence']:.3f}, "
         f"header={header_confidence:.3f}, "
-        f"mask_bottom={mask_bottom}, source={mask_source})"
+        f"mask_bottom={mask_bottom}, source={mask_source}, orientation={orientation_source})"
     )
     return True, "OK"
+
+
+def get_external_pdpa_masking_service_url() -> str:
+    return os.environ.get("PDPA_MASKING_SERVICE_URL", "").strip()
+
+
+def get_external_pdpa_masking_timeout_seconds() -> float:
+    try:
+        return float(os.environ.get("PDPA_MASKING_SERVICE_TIMEOUT_SECONDS", "45"))
+    except ValueError:
+        return 45.0
+
+
+def create_external_pdpa_safe_image(
+    input_path: str,
+    rectified_output_path: str,
+    safe_output_path: str,
+) -> tuple[bool, str]:
+    service_url = get_external_pdpa_masking_service_url()
+    if not service_url:
+        return False, "external_pdpa_not_configured"
+
+    try:
+        with open(input_path, "rb") as image_file:
+            image_bytes = image_file.read()
+    except OSError as e:
+        print(f"External PDPA input read failed: {e}")
+        return False, "external_pdpa_input_read_failed"
+
+    headers = {"Content-Type": "image/jpeg"}
+    token = os.environ.get("PDPA_MASKING_SERVICE_TOKEN", "").strip()
+    if token:
+        headers["X-PDPA-Token"] = token
+
+    try:
+        response = requests.post(
+            service_url,
+            data=image_bytes,
+            headers=headers,
+            timeout=get_external_pdpa_masking_timeout_seconds(),
+        )
+    except requests.RequestException as e:
+        print(f"External PDPA service request failed: {e}")
+        return False, "external_pdpa_request_failed"
+
+    if response.status_code != 200:
+        print(
+            "External PDPA service returned error: "
+            f"status={response.status_code} body={response.text[:300]}"
+        )
+        return False, f"external_pdpa_status_{response.status_code}"
+
+    content_type = response.headers.get("Content-Type", "")
+    if "image" not in content_type.lower():
+        print(f"External PDPA service returned non-image content: {content_type}")
+        return False, "external_pdpa_non_image_response"
+
+    try:
+        with open(safe_output_path, "wb") as safe_file:
+            safe_file.write(response.content)
+        shutil.copyfile(safe_output_path, rectified_output_path)
+    except OSError as e:
+        print(f"External PDPA output write failed: {e}")
+        return False, "external_pdpa_output_write_failed"
+
+    print(f"External PDPA masking used: {service_url}")
+    return True, "OK"
+
+
+def external_pdpa_unavailable_text(user_language: str) -> str:
+    if normalize_language(user_language) == "th":
+        return 'ระบบปิดข้อมูลส่วนบุคคลขัดข้องชั่วคราว กรุณาถ่ายผ่านปุ่ม "ถ่ายฉลากยา(Camera)" แทนครับ'
+    return t(user_language, "pdpa_masking_failed")
 
 
 def create_liff_guideline_pdpa_safe_image(input_path: str, output_path: str) -> tuple[bool, str]:
@@ -2789,7 +3074,15 @@ def _handle_image_impl(event, user_language: str):
     with open(temp_file_path, 'wb') as fd:
         for chunk in message_content.iter_content():
             fd.write(chunk)
-            
+
+    prepare_ok, prepare_message = prepare_upload_image_for_qc(temp_file_path)
+    if not prepare_ok:
+        print(f"IMAGE_UPLOAD_STAGE_FAILED stage=prepare_upload message_id={event.message.id} reason={prepare_message}")
+        reply_or_push_message(line_bot_api, user_id, event.reply_token, TextSendMessage(text=t(user_language, "image_processing_error")))
+        if os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+        return
+
     # ==========================================
     # เฟส 1: ด่านตรวจ QC รูปภาพ
     # ==========================================
@@ -2803,7 +3096,7 @@ def _handle_image_impl(event, user_language: str):
     normalized_file_path = f"/tmp/{event.message.id}_normalized.jpg"
     normalize_ok, normalize_message = normalize_label_image_for_ai(temp_file_path, normalized_file_path)
     if not normalize_ok:
-        print(f"Image preprocessing failed for {event.message.id}: {normalize_message}")
+        print(f"IMAGE_UPLOAD_STAGE_FAILED stage=normalize message_id={event.message.id} reason={normalize_message}")
         reply_or_push_message(line_bot_api, user_id, event.reply_token, TextSendMessage(text=t(user_language, "image_processing_error")))
         for path in (temp_file_path, normalized_file_path):
             if os.path.exists(path):
@@ -2812,12 +3105,27 @@ def _handle_image_impl(event, user_language: str):
 
     rectified_file_path = f"/tmp/{event.message.id}_rectified.jpg"
     safe_file_path = f"/tmp/{event.message.id}_safe.jpg"
-    pdpa_ok, pdpa_message = create_yolo_obb_pdpa_safe_image(
-        normalized_file_path,
-        rectified_file_path,
-        safe_file_path,
-    )
+    if get_external_pdpa_masking_service_url():
+        pdpa_ok, pdpa_message = create_external_pdpa_safe_image(
+            normalized_file_path,
+            rectified_file_path,
+            safe_file_path,
+        )
+    else:
+        pdpa_ok, pdpa_message = create_yolo_obb_pdpa_safe_image(
+            normalized_file_path,
+            rectified_file_path,
+            safe_file_path,
+        )
     if not pdpa_ok:
+        if get_external_pdpa_masking_service_url():
+            print(f"IMAGE_UPLOAD_STAGE_FAILED stage=external_pdpa message_id={event.message.id} reason={pdpa_message}")
+            reply_or_push_message(line_bot_api, user_id, event.reply_token, TextSendMessage(text=external_pdpa_unavailable_text(user_language)))
+            for path in (temp_file_path, normalized_file_path, rectified_file_path, safe_file_path):
+                if os.path.exists(path):
+                    os.remove(path)
+            return
+
         if pdpa_message != "yolo_obb_disabled":
             print(f"YOLO-OBB PDPA fallback to OpenCV for {event.message.id}: {pdpa_message}")
         rectify_ok, rectify_message = rectify_label_image_for_ai(
@@ -2826,8 +3134,8 @@ def _handle_image_impl(event, user_language: str):
             use_yolo_obb=False,
         )
         if not rectify_ok:
-            print(f"Image rectification failed for {event.message.id}: {rectify_message}")
-            reply_or_push_message(line_bot_api, user_id, event.reply_token, TextSendMessage(text=t(user_language, "image_processing_error")))
+            print(f"IMAGE_UPLOAD_STAGE_FAILED stage=rectify message_id={event.message.id} reason={rectify_message}")
+            reply_or_push_message(line_bot_api, user_id, event.reply_token, TextSendMessage(text=t(user_language, "pdpa_masking_failed")))
             for path in (temp_file_path, normalized_file_path, rectified_file_path, safe_file_path):
                 if os.path.exists(path):
                     os.remove(path)
