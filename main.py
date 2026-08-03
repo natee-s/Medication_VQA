@@ -112,7 +112,7 @@ def prepare_upload_image_for_qc(file_path: str) -> tuple[bool, str]:
     return False, f"image_too_large_after_compression:{final_size_mb:.1f}MB"
 
 
-def check_image_quality(file_path):
+def check_image_quality(file_path, skip_distance_check: bool = False):
     # 1. ตรวจสอบขนาดไฟล์ (ไม่เกิน 3MB)
     file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
     print(f"🔍 [TEST] ขนาดไฟล์รูปนี้คือ: {file_size_mb:.1f} MB")
@@ -173,7 +173,7 @@ def check_image_quality(file_path):
         print(f"🔍 [TEST] ค่าพื้นที่วัตถุ: {object_area}, ค่าพื้นที่ภาพรวม: {total_area}, สัดส่วน: {object_area/total_area:.3f}")
         
         object_area_ratio = object_area / total_area
-        if object_area_ratio < QC_MIN_OBJECT_AREA_RATIO:
+        if not skip_distance_check and object_area_ratio < QC_MIN_OBJECT_AREA_RATIO:
             return False, "⚠️ รูปภาพอยู่ไกลเกินไป กรุณาถ่ายใกล้ๆ ให้ฉลากยาเต็มกรอบภาพครับ"
 
     # 6. Auto-Deskew (แก้เอียงอัตโนมัติ 1-15 องศา)
@@ -3086,7 +3086,10 @@ def _handle_image_impl(event, user_language: str):
     # ==========================================
     # เฟส 1: ด่านตรวจ QC รูปภาพ
     # ==========================================
-    is_good, qc_message = check_image_quality(temp_file_path)
+    is_good, qc_message = check_image_quality(
+        temp_file_path,
+        skip_distance_check=bool(get_external_pdpa_masking_service_url()),
+    )
     if not is_good:
         reply_or_push_message(line_bot_api, user_id, event.reply_token, TextSendMessage(text=qc_message))
         if os.path.exists(temp_file_path):
