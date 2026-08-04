@@ -129,42 +129,93 @@ async function startCamera() {
     return;
   }
 
+  captureButton.disabled = true;
+
   try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: { ideal: "environment" },
-      },
-      audio: false,
-    });
+    stream = await requestRearCameraStream();
+    await normalizeCameraZoom(stream);
     video.srcObject = stream;
     await video.play().catch(() => {});
-    await resetCameraZoom(stream);
+
+    const [track] = stream.getVideoTracks();
+    const settings = track?.getSettings?.() || {};
+    console.info("LIFF camera ready", {
+      label: track?.label || "unknown",
+      facingMode: settings.facingMode || "unknown",
+      width: settings.width || 0,
+      height: settings.height || 0,
+      zoom: settings.zoom ?? "not-reported",
+    });
+
+    captureButton.disabled = false;
     setStatusKey("status_align_label");
   } catch (error) {
     console.error(error);
+    stopCameraStream();
     setStatusKey("status_camera_denied");
     captureButton.disabled = true;
   }
 }
 
-async function resetCameraZoom(mediaStream) {
+async function requestRearCameraStream() {
+  try {
+    return await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { exact: "environment" },
+      },
+      audio: false,
+    });
+  } catch (error) {
+    if (error?.name === "NotAllowedError" || error?.name === "SecurityError") {
+      throw error;
+    }
+
+    console.warn("Exact rear camera unavailable; using preferred rear camera", error);
+    return navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: "environment" },
+      },
+      audio: false,
+    });
+  }
+}
+
+async function normalizeCameraZoom(mediaStream) {
   const [track] = mediaStream?.getVideoTracks?.() || [];
-  if (!track?.getCapabilities || !track?.applyConstraints) {
+  if (!track?.getCapabilities || !track?.getSettings || !track?.applyConstraints) {
     return;
   }
 
   const capabilities = track.getCapabilities();
-  if (!("zoom" in capabilities)) {
+  const settings = track.getSettings();
+  const currentZoom = Number(settings.zoom);
+  const minZoom = Number(capabilities.zoom?.min);
+  const maxZoom = Number(capabilities.zoom?.max);
+
+  if (
+    !Number.isFinite(currentZoom) ||
+    currentZoom <= 1.01 ||
+    !Number.isFinite(minZoom) ||
+    !Number.isFinite(maxZoom) ||
+    minZoom > 1 ||
+    maxZoom < 1
+  ) {
     return;
   }
 
-  const minZoom = Number.isFinite(capabilities.zoom.min) ? capabilities.zoom.min : 1;
-  const targetZoom = Math.max(minZoom, 1);
   try {
-    await track.applyConstraints({ advanced: [{ zoom: targetZoom }] });
+    await track.applyConstraints({ zoom: 1 });
   } catch (error) {
-    console.warn("Camera zoom reset skipped", error);
+    console.warn("Camera 1x normalization skipped", error);
   }
+}
+
+function stopCameraStream() {
+  if (stream) {
+    stream.getTracks().forEach((track) => track.stop());
+    stream = null;
+  }
+  video.srcObject = null;
 }
 
 async function initializeLiff() {
@@ -360,7 +411,9 @@ uploadButton.addEventListener("click", uploadCapture);
 async function bootstrap() {
   await initializeLiff();
   await loadLiffMessages();
-  startCamera();
+  await startCamera();
 }
+
+window.addEventListener("pagehide", stopCameraStream);
 
 bootstrap();

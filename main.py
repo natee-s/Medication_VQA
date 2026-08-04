@@ -2568,7 +2568,11 @@ def liff_camera_page():
     camera_page = LIFF_CAMERA_DIR / "index.html"
     if not camera_page.exists():
         raise HTTPException(status_code=404, detail="LIFF camera page is not available")
-    return FileResponse(str(camera_page), media_type="text/html; charset=utf-8")
+    return FileResponse(
+        str(camera_page),
+        media_type="text/html; charset=utf-8",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/liff/config")
