@@ -1,6 +1,5 @@
 const OUTPUT_WIDTH = 1344;
 const OUTPUT_HEIGHT = 1000;
-const OUTPUT_ASPECT_RATIO = OUTPUT_WIDTH / OUTPUT_HEIGHT;
 const JPEG_QUALITY = 0.9;
 const PDPA_MASK_RATIO = 0.25;
 
@@ -134,9 +133,6 @@ async function startCamera() {
     stream = await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: { ideal: "environment" },
-        width: { ideal: 1280 },
-        height: { ideal: 960 },
-        aspectRatio: { ideal: OUTPUT_ASPECT_RATIO },
       },
       audio: false,
     });
