@@ -2316,6 +2316,199 @@ def build_reminder_alert_flex(lang: str, meal: str, timing: str, drugs: list[dic
     }
 
 
+DRUG_LIST_TEXTS = {
+    "th": {
+        "title": "รายการยาที่ต้องกิน",
+        "subtitle": "รายการยาที่ตั้งเตือนไว้ตอนนี้",
+        "meal_label": "เวลาใช้ยา",
+        "empty_meal": "ไม่ระบุมื้อ",
+        "footer": "ขอให้สุขภาพแข็งแรงนะครับ",
+        "alt": "รายการยาที่ต้องกิน",
+        "empty_reply": "ตอนนี้คุณไม่มีรายการยาที่ตั้งเตือนไว้ครับ หากต้องการตั้งเตือนสามารถถ่ายรูปฉลากยาส่งมาได้เลยครับ 📸",
+        "error_reply": "ขออภัยครับ ไม่สามารถดึงข้อมูลรายการยาได้ในขณะนี้",
+    },
+    "en": {
+        "title": "Medication List",
+        "subtitle": "Your active medication reminders",
+        "meal_label": "Schedule",
+        "empty_meal": "Meal not specified",
+        "footer": "Wishing you good health",
+        "alt": "Medication list",
+        "empty_reply": "You do not have active medication reminders yet. Send a medicine label photo to set one up. 📸",
+        "error_reply": "Sorry, I cannot load your medication list right now.",
+    },
+    "my": {
+        "title": "သောက်ရမည့်ဆေးများ",
+        "subtitle": "လက်ရှိသတ်မှတ်ထားသော ဆေးသတိပေးချက်များ",
+        "meal_label": "သောက်ရန်အချိန်",
+        "empty_meal": "အချိန်မဖော်ပြထားပါ",
+        "footer": "ကျန်းမာပါစေ",
+        "alt": "သောက်ရမည့်ဆေးများ",
+        "empty_reply": "လက်ရှိ ဆေးသတိပေးချက် မရှိသေးပါ။ သတ်မှတ်လိုပါက ဆေးလේဘယ်ဓာတ်ပုံ ပို့ပေးနိုင်ပါတယ်။ 📸",
+        "error_reply": "တောင်းပန်ပါတယ်။ လက်ရှိ ဆေးစာရင်းကို မဖွင့်နိုင်သေးပါ။",
+    },
+    "lo": {
+        "title": "ລາຍການຢາທີ່ຕ້ອງກິນ",
+        "subtitle": "ລາຍການເຕືອນກິນຢາທີ່ກຳລັງໃຊ້ງານ",
+        "meal_label": "ເວລາໃຊ້ຢາ",
+        "empty_meal": "ບໍ່ລະບຸມື້",
+        "footer": "ຂໍໃຫ້ສຸຂະພາບແຂງແຮງ",
+        "alt": "ລາຍການຢາທີ່ຕ້ອງກິນ",
+        "empty_reply": "ຕອນນີ້ຍັງບໍ່ມີລາຍການເຕືອນກິນຢາ. ຖ້າຕ້ອງການຕັ້ງເຕືອນ ສົ່ງຮູບສະຫຼາກຢາໄດ້ເລີຍ. 📸",
+        "error_reply": "ຂໍອະໄພ ຕອນນີ້ບໍ່ສາມາດດຶງຂໍ້ມູນລາຍການຢາໄດ້.",
+    },
+    "zh": {
+        "title": "用药清单",
+        "subtitle": "当前已启用的用药提醒",
+        "meal_label": "用药时间",
+        "empty_meal": "未注明时间",
+        "footer": "祝您身体健康",
+        "alt": "用药清单",
+        "empty_reply": "目前还没有启用的用药提醒。如需设置提醒，请发送药品标签照片。📸",
+        "error_reply": "抱歉，目前无法读取您的用药清单。",
+    },
+}
+
+
+def get_drug_list_texts(lang: str) -> dict:
+    return DRUG_LIST_TEXTS.get(normalize_language(lang), DRUG_LIST_TEXTS["th"])
+
+
+def build_drug_list_flex(lang: str, reminders: list[dict]) -> dict:
+    labels = get_drug_list_texts(lang)
+
+    meal_order = ("morning", "noon", "evening", "bedtime")
+    item_contents = []
+    for index, item in enumerate(reminders[:10], start=1):
+        timing = item.get("meal_timing") or "after"
+        meal_displays = [
+            get_reminder_meal_display(lang, meal, timing)
+            for meal in meal_order
+            if item.get(meal)
+        ]
+        meal_text = " / ".join(meal_displays) if meal_displays else labels["empty_meal"]
+        drug_name = item.get("drug_name") or t(lang, "not_specified")
+
+        if item_contents:
+            item_contents.append({"type": "separator", "margin": "md"})
+
+        item_contents.append(
+            {
+                "type": "box",
+                "layout": "horizontal",
+                "spacing": "sm",
+                "margin": "md",
+                "contents": [
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "width": "28px",
+                        "height": "28px",
+                        "cornerRadius": "14px",
+                        "backgroundColor": "#EAF8EF",
+                        "justifyContent": "center",
+                        "alignItems": "center",
+                        "contents": [
+                            {
+                                "type": "text",
+                                "text": str(index),
+                                "size": "xs",
+                                "weight": "bold",
+                                "color": "#1DB446",
+                                "align": "center",
+                            }
+                        ],
+                    },
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "spacing": "xs",
+                        "flex": 1,
+                        "contents": [
+                            {
+                                "type": "text",
+                                "text": drug_name,
+                                "size": "sm",
+                                "weight": "bold",
+                                "color": "#222222",
+                                "wrap": True,
+                            },
+                            {
+                                "type": "text",
+                                "text": f"{labels['meal_label']}: {meal_text}",
+                                "size": "xs",
+                                "color": "#666666",
+                                "wrap": True,
+                            },
+                        ],
+                    },
+                ],
+            }
+        )
+
+    if len(reminders) > 10:
+        item_contents.append(
+            {
+                "type": "text",
+                "text": f"+{len(reminders) - 10}",
+                "size": "xs",
+                "color": "#888888",
+                "align": "end",
+                "margin": "md",
+            }
+        )
+
+    return {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#1DB446",
+            "paddingAll": "18px",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": f"💊 {labels['title']}",
+                    "weight": "bold",
+                    "size": "lg",
+                    "color": "#FFFFFF",
+                    "wrap": True,
+                },
+                {
+                    "type": "text",
+                    "text": labels["subtitle"],
+                    "size": "xs",
+                    "color": "#DDF7E6",
+                    "margin": "xs",
+                    "wrap": True,
+                },
+            ],
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "sm",
+            "contents": item_contents,
+        },
+        "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": f"{labels['footer']} 💙",
+                    "size": "sm",
+                    "color": "#1DB446",
+                    "weight": "bold",
+                    "align": "center",
+                    "wrap": True,
+                }
+            ],
+        },
+    }
+
+
 def build_language_picker(lang: str = DEFAULT_LANGUAGE) -> dict:
     return {
         "type": "bubble",
@@ -3881,6 +4074,33 @@ def handle_text_message(event):
     # ==========================================
     # ⚡ [ดักจับพิเศษ] คำสั่งจาก Rich Menu
     # ==========================================
+    if is_drug_list_command(user_text):
+        try:
+            drug_list_labels = get_drug_list_texts(user_language)
+            res = supabase.table("reminder_schedules") \
+                .select("drug_name, morning, noon, evening, bedtime, meal_timing") \
+                .eq("line_uid", user_id) \
+                .eq("is_active", True) \
+                .execute()
+            if res.data:
+                line_bot_api.reply_message(
+                    event.reply_token,
+                    FlexSendMessage(
+                        alt_text=drug_list_labels["alt"],
+                        contents=build_drug_list_flex(user_language, res.data),
+                    ),
+                )
+            else:
+                reply_text = drug_list_labels["empty_reply"]
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+        except Exception as e:
+            print(f"❌ Error checking meds: {e}")
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text=get_drug_list_texts(user_language)["error_reply"]),
+            )
+        return
+
     if is_drug_list_command(user_text):
         try:
             # ดึงข้อมูลยาที่ยัง Active อยู่ของลูกค้ารายนี้

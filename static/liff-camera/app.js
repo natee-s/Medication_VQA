@@ -133,17 +133,38 @@ async function startCamera() {
     stream = await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: { ideal: "environment" },
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
       },
       audio: false,
     });
     video.srcObject = stream;
+    await resetCameraZoom(stream);
     setStatusKey("status_align_label");
   } catch (error) {
     console.error(error);
     setStatusKey("status_camera_denied");
     captureButton.disabled = true;
+  }
+}
+
+async function resetCameraZoom(mediaStream) {
+  const [track] = mediaStream?.getVideoTracks?.() || [];
+  if (!track?.getCapabilities || !track?.applyConstraints) {
+    return;
+  }
+
+  const capabilities = track.getCapabilities();
+  if (!("zoom" in capabilities)) {
+    return;
+  }
+
+  const minZoom = Number.isFinite(capabilities.zoom.min) ? capabilities.zoom.min : 1;
+  const targetZoom = Math.max(minZoom, 1);
+  try {
+    await track.applyConstraints({ advanced: [{ zoom: targetZoom }] });
+  } catch (error) {
+    console.warn("Camera zoom reset skipped", error);
   }
 }
 
