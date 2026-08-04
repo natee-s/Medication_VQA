@@ -1,0 +1,45 @@
+services:
+  main:
+    build:
+      context: .
+      dockerfile: Dockerfile.ubuntu-main
+    container_name: medication-vqa-main
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      PDPA_MASKING_SERVICE_URL: http://pdpa-masker:17081/mask
+    ports:
+      - "17080:17080"
+    depends_on:
+      - pdpa-masker
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:17080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  pdpa-masker:
+    build:
+      context: .
+      dockerfile: Dockerfile.ubuntu-yolo
+    container_name: medication-vqa-pdpa-masker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      YOLO_OBB_ENABLED: "true"
+      YOLO_OBB_MODEL_PATH: /app/models/yolo_obb/best_round3.pt
+      YOLO_OBB_CONFIDENCE: "0.45"
+      YOLO_OBB_IMAGE_SIZE: "1024"
+      SAVE_LOCAL_PDPA_DEBUG_IMAGES: "true"
+      LOCAL_PDPA_DEBUG_DIR: /app/test/local_pdpa_debug
+    ports:
+      - "127.0.0.1:17081:17081"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:17081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s

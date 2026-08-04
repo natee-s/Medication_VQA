@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!.env.ubuntu.example
 
 # Python virtual environment
 .venv/
@@ -19,7 +20,9 @@ __pycache__/
 htmlcov/
 
 # Local debug outputs
+datasets/
 debug_pdpa/
+debug_yolo_local/
 debug_thresh.jpg
 tests/debug_thresh.jpg
 runs/
