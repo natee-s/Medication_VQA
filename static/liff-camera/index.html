@@ -4,11 +4,10 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Medication Label Camera</title>
-    <link rel="stylesheet" href="/static/liff-camera/style.css" />
+    <link rel="stylesheet" href="/static/liff-camera/style.css?v=zoom-frame-20260804" />
   </head>
   <body>
     <main class="camera-shell">
-      <video id="cameraPreview" class="camera-preview" autoplay playsinline muted></video>
       <canvas id="captureCanvas" width="1344" height="1000" hidden></canvas>
 
       <section id="processingOverlay" class="processing-overlay" hidden aria-live="polite" aria-busy="true">
@@ -25,6 +24,7 @@
 
       <section class="guide-panel" aria-label="Medication label capture guideline">
         <div id="guideFrame" class="guide-frame">
+          <video id="cameraPreview" class="camera-preview" autoplay playsinline muted></video>
           <div id="guideHeaderLabel" class="guide-header-label" data-i18n="guide_header">ส่วนหัวฉลาก</div>
           <div class="guide-divider"></div>
           <div id="guideBodyLabel" class="guide-body-label" data-i18n="guide_body">ชื่อยาและวิธีใช้</div>
@@ -50,6 +50,6 @@
     </main>
 
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-    <script src="/static/liff-camera/app.js"></script>
+    <script src="/static/liff-camera/app.js?v=zoom-frame-20260804"></script>
   </body>
 </html>

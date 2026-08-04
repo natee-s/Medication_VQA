@@ -1,5 +1,6 @@
 const OUTPUT_WIDTH = 1344;
 const OUTPUT_HEIGHT = 1000;
+const OUTPUT_ASPECT_RATIO = OUTPUT_WIDTH / OUTPUT_HEIGHT;
 const JPEG_QUALITY = 0.9;
 const PDPA_MASK_RATIO = 0.25;
 
@@ -134,11 +135,13 @@ async function startCamera() {
       video: {
         facingMode: { ideal: "environment" },
         width: { ideal: 1280 },
-        height: { ideal: 720 },
+        height: { ideal: 960 },
+        aspectRatio: { ideal: OUTPUT_ASPECT_RATIO },
       },
       audio: false,
     });
     video.srcObject = stream;
+    await video.play().catch(() => {});
     await resetCameraZoom(stream);
     setStatusKey("status_align_label");
   } catch (error) {
@@ -198,15 +201,31 @@ function getGuideSourceRect() {
   const guideRect = guideFrame.getBoundingClientRect();
   const videoWidth = video.videoWidth;
   const videoHeight = video.videoHeight;
+  const objectFit = getComputedStyle(video).objectFit || "contain";
 
-  const scale = Math.max(videoRect.width / videoWidth, videoRect.height / videoHeight);
+  const scale =
+    objectFit === "cover"
+      ? Math.max(videoRect.width / videoWidth, videoRect.height / videoHeight)
+      : Math.min(videoRect.width / videoWidth, videoRect.height / videoHeight);
   const renderedWidth = videoWidth * scale;
   const renderedHeight = videoHeight * scale;
-  const offsetX = (renderedWidth - videoRect.width) / 2;
-  const offsetY = (renderedHeight - videoRect.height) / 2;
+  const offsetX =
+    objectFit === "cover"
+      ? (renderedWidth - videoRect.width) / 2
+      : (videoRect.width - renderedWidth) / 2;
+  const offsetY =
+    objectFit === "cover"
+      ? (renderedHeight - videoRect.height) / 2
+      : (videoRect.height - renderedHeight) / 2;
 
-  const sourceX = (guideRect.left - videoRect.left + offsetX) / scale;
-  const sourceY = (guideRect.top - videoRect.top + offsetY) / scale;
+  const sourceX =
+    objectFit === "cover"
+      ? (guideRect.left - videoRect.left + offsetX) / scale
+      : (guideRect.left - videoRect.left - offsetX) / scale;
+  const sourceY =
+    objectFit === "cover"
+      ? (guideRect.top - videoRect.top + offsetY) / scale
+      : (guideRect.top - videoRect.top - offsetY) / scale;
   const sourceWidth = guideRect.width / scale;
   const sourceHeight = guideRect.height / scale;
 
