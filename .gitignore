@@ -28,6 +28,7 @@ hf_pdpa_masking_service/
 local_pdpa_uvicorn_test.*
 postgres/import/
 postgres/backups/
+sample/
 test/local_pdpa_debug/
 debug_thresh.jpg
 tests/debug_thresh.jpg

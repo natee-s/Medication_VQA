@@ -33,18 +33,27 @@ class DebugPdpaImageScriptTests(unittest.TestCase):
             output_dir = temp_path / "debug_pdpa"
             self._write_label(input_path)
 
-            result = process_pdpa_debug_image(input_path, output_dir, run_qc=False)
+            result = process_pdpa_debug_image(input_path, output_dir, run_qc=False, use_yolo_obb=False)
 
             self.assertTrue(result.normalized_path.exists())
+            self.assertTrue(result.rectified_path.exists())
             self.assertTrue(result.safe_path.exists())
+            self.assertIsNone(result.yolo_overlay_path)
+            self.assertEqual(result.masking_mode, "opencv")
             self.assertEqual(result.normalized_path.name, "sample_label_normalized.jpg")
+            self.assertEqual(result.rectified_path.name, "sample_label_rectified.jpg")
             self.assertEqual(result.safe_path.name, "sample_label_safe.jpg")
+
+            rectified_image = cv2.imread(str(result.rectified_path))
+            self.assertIsNotNone(rectified_image)
+            self.assertEqual(rectified_image.shape[:2], (1000, 1344))
 
             safe_image = cv2.imread(str(result.safe_path))
             self.assertIsNotNone(safe_image)
+            self.assertEqual(safe_image.shape[:2], (1000, 1344))
             gray = cv2.cvtColor(safe_image, cv2.COLOR_BGR2GRAY)
-            self.assertGreater(np.mean(gray[:120, :] < 20), 0.85)
-            self.assertGreater(np.mean(gray[220:, :] < 80), 0.003)
+            self.assertGreater(np.mean(gray[:250, :] < 20), 0.95)
+            self.assertGreater(np.mean(gray[300:, :] < 80), 0.003)
 
 
 if __name__ == "__main__":
