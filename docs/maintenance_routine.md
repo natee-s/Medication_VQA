@@ -315,33 +315,79 @@ docker compose -f docker-compose.postgres.yml restart db
 bash tools/ubuntu_health_check.sh
 ```
 
-## Optional Cron Schedule
+## Automatic Backup Cron
 
-ยังไม่แนะนำให้เปิด cron อัตโนมัติทันทีจนกว่า mentor จะยืนยันเวลา backup ที่เหมาะสม
+ตอนนี้มีสคริปต์สำหรับติดตั้ง cron backup อัตโนมัติแล้ว
 
-ถ้าต้องการตั้ง backup อัตโนมัติภายหลัง แนวคิดคือ:
+ค่า default:
 
-- backup วันละครั้งช่วงกลางคืน
-- retention 14-30 วัน
-- เขียน log ไว้ในไฟล์
-- ยังต้องทำ safe restore test เองอย่างน้อยสัปดาห์ละครั้ง
+- backup ทุกวันเวลา 02:30
+- เก็บ backup 30 วัน
+- log อยู่ที่ `postgres/backups/backup.log`
+- safe restore test ยังต้องทำเองสัปดาห์ละครั้ง
 
-ตัวอย่าง cron สำหรับ backup ทุกวันเวลา 02:30:
-
-```cron
-30 2 * * * cd /home/v89dev/apps/Medication_VQA && RETENTION_DAYS=30 bash postgres/scripts/backup_postgres.sh >> /home/v89dev/apps/Medication_VQA/postgres/backups/backup.log 2>&1
-```
-
-วิธีเปิด crontab:
+### ติดตั้ง cron backup
 
 ```bash
-crontab -e
+cd ~/apps/Medication_VQA
+bash postgres/scripts/install_backup_cron.sh
 ```
 
-หลังตั้ง cron ให้เช็กว่าไฟล์ backup ถูกสร้างจริงในวันถัดไป:
+หลังรันแล้วให้ดูบรรทัด `Server time now` เพื่อยืนยันว่าเวลา cron อ้างอิง timezone ของ server
+
+ถ้าต้องการเปลี่ยนเวลา เช่น backup ทุกวันเวลา 03:15:
 
 ```bash
-ls -lt ~/apps/Medication_VQA/postgres/backups/ | head
+CRON_SCHEDULE="15 3 * * *" bash postgres/scripts/install_backup_cron.sh
+```
+
+ถ้าต้องการเก็บ backup 45 วัน:
+
+```bash
+RETENTION_DAYS=45 bash postgres/scripts/install_backup_cron.sh
+```
+
+ถ้าต้องการเปลี่ยนทั้งเวลาและ retention:
+
+```bash
+CRON_SCHEDULE="15 3 * * *" RETENTION_DAYS=45 bash postgres/scripts/install_backup_cron.sh
+```
+
+สคริปต์นี้จะเพิ่ม cron block ที่มี marker ชัดเจน:
+
+```text
+# BEGIN Medication_VQA PostgreSQL backup
+...
+# END Medication_VQA PostgreSQL backup
+```
+
+ถ้ารันซ้ำ จะอัปเดต block เดิม ไม่สร้างซ้ำหลายอัน
+
+### เช็ก cron backup
+
+```bash
+bash postgres/scripts/check_backup_cron.sh
+```
+
+คำสั่งนี้จะแสดง:
+
+- cron block ที่ถูกตั้งไว้
+- backup files ล่าสุด
+- backup log ล่าสุด
+
+### ทดสอบ backup ทันทีหลังติดตั้ง cron
+
+cron จะรันตามเวลาที่ตั้งไว้ แต่หลังติดตั้งครั้งแรกควรทดสอบ manual ทันที:
+
+```bash
+bash postgres/scripts/backup_postgres.sh
+ls -lt postgres/backups/ | head
+```
+
+แล้วเช็ก checksum:
+
+```bash
+sha256sum -c postgres/backups/<backup-file.dump>.sha256
 ```
 
 ## Routine Summary
@@ -353,4 +399,3 @@ ls -lt ~/apps/Medication_VQA/postgres/backups/ | head
 | ทุกสัปดาห์ | backup + checksum + safe restore | `backup_postgres.sh`, `test_restore_postgres.sh` |
 | ทุกเดือน | disk cleanup review + debug image review + Supabase fallback review | `df -h`, `du -sh`, อ่านเอกสาร fallback |
 | เมื่อเกิดปัญหา | health check + logs + incident note | ดู `docs/monitoring_logs_health.md` |
-

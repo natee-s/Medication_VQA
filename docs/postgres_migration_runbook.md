@@ -244,6 +244,20 @@ KEEP_TEST_RESTORE=YES bash postgres/scripts/test_restore_postgres.sh postgres/ba
 docker compose -f docker-compose.postgres.yml exec db psql -U medication_vqa -d medication_vqa -c 'select count(*) from public."Medication_VQA";'
 ```
 
+ตั้ง cron backup อัตโนมัติทุกวันเวลา 02:30 และเก็บ backup 30 วัน:
+
+```bash
+bash postgres/scripts/install_backup_cron.sh
+```
+
+เช็ก cron backup, ไฟล์ backup ล่าสุด, และ backup log:
+
+```bash
+bash postgres/scripts/check_backup_cron.sh
+```
+
+ดูรายละเอียด routine เพิ่มเติมใน `docs/maintenance_routine.md`
+
 ## 7. ทดสอบผ่าน Main App
 
 หลังตั้ง `DB_BACKEND=postgres` แล้ว restart main app:
