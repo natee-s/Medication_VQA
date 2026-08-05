@@ -20,10 +20,15 @@ __pycache__/
 htmlcov/
 
 # Local debug outputs
+BboxTest_result*/
 datasets/
 debug_pdpa/
 debug_yolo_local/
+hf_pdpa_masking_service/
+local_pdpa_uvicorn_test.*
+postgres/import/
 postgres/backups/
+test/local_pdpa_debug/
 debug_thresh.jpg
 tests/debug_thresh.jpg
 runs/
