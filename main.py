@@ -27,15 +27,25 @@ from google.genai import types
 import json
 import requests
 import shutil
-from services.supabase_service import (
+from services.database_service import (
     DEFAULT_LANGUAGE,
     SUPPORTED_LANGUAGES,
-    SUPABASE_URL,
+    create_reminder_schedule,
+    deactivate_reminder,
     ensure_user_profile,
+    fetch_all_medication_rows,
+    get_active_reminder_drugs,
+    get_active_reminder_schedules,
+    get_profiles_for_reminder_check,
     get_user_language,
+    is_database_available,
+    match_symptoms,
+    SUPABASE_URL,
     normalize_language,
+    search_medication_by_generic_name,
+    search_medication_rows,
     set_user_language,
-    supabase,
+    update_user_default_time,
 )
 from urllib.parse import parse_qsl
 from datetime import datetime
@@ -929,7 +939,7 @@ def get_yolo_obb_model():
     if not Path(model_path).exists():
         print(f"YOLO-OBB model not found: {model_path}")
         return None
-
+        
     try:
         from ultralytics import YOLO
     except ImportError:
@@ -2705,8 +2715,8 @@ def debug_liff_masked_image_file(filename: str, token: str = ""):
 
 @app.get("/cron/check-reminder")
 def check_reminder():
-    if not supabase:
-        return {"status": "error", "message": "Supabase not connected"}
+    if not is_database_available():
+        return {"status": "error", "message": "Database not connected"}
 
     # 1. นำเข้า timedelta เพื่อใช้คำนวณเวลา และดึงเวลาปัจจุบัน
     from datetime import timedelta
@@ -2743,9 +2753,7 @@ def check_reminder():
         if current_time_str == "17:30": or_conditions.append("default_evening.is.null")
         if current_time_str == "20:30": or_conditions.append("default_bedtime.is.null")
         
-        query_string = ",".join(or_conditions)
-        users_res = supabase.table("user_profiles").select("*").or_(query_string).execute()
-        users = users_res.data
+        users = get_profiles_for_reminder_check(current_time_db, future_30_db, current_time_str)
         
         count_messages_sent = 0
 
@@ -2789,9 +2797,7 @@ def check_reminder():
                 meal_display = get_reminder_meal_display(user_language, meal_col, timing)
                 
                 # ค้นหายาที่ผูกกับเวลาและประเภทก่อน/หลังอาหารนี้
-                reminders_res = supabase.table("reminder_schedules").select("drug_name")\
-                    .eq("line_uid", uid).eq("is_active", True).eq(meal_col, True).eq("meal_timing", timing).execute()
-                drugs = reminders_res.data
+                drugs = get_active_reminder_drugs(uid, meal_col, timing)
                 
                 if drugs:
                     flex_alert = build_reminder_alert_flex(user_language, meal_col, timing, drugs)
@@ -2892,23 +2898,13 @@ async def webhook(request: Request):
 # ฟังก์ชันค้นหาข้อมูลยา (RAG Search)
 # ==========================================
 def search_medicine_in_db(drug_name: str):
-    """
-    ฟังก์ชันนี้จะรับชื่อยา (ที่ AI อ่านได้) มาค้นหาในฐานข้อมูล
-    เพื่อดึงข้อมูล Official กลับไปแสดงผล
-    """
-    if not supabase:
+    if not is_database_available():
         print("⚠️ สัญญาณการเชื่อมต่อ Supabase ไม่พร้อมใช้งาน")
         return None
         
     try:
-        # ใช้ .or_ เพื่อค้นหาชื่อยาจากทั้งคอลัมน์ generic_name และ trade_name
-        search_query = f"generic_name.ilike.%{drug_name}%,trade_name.ilike.%{drug_name}%"
-        response = supabase.table('Medication_VQA').select('*').or_(search_query).execute()
-        
-        if response.data and len(response.data) > 0:
-            return response.data[0] # ส่งข้อมูลแถวแรกที่เจอแจ็กพอตกลับไป
-        else:
-            return None # ไม่พบข้อมูลในระบบ
+        rows = search_medication_rows(drug_name)
+        return rows[0] if rows else None
             
     except Exception as e:
         print(f"⚠️ เกิดข้อผิดพลาดในการค้นหาข้อมูล: {e}")
@@ -2920,13 +2916,11 @@ MEDICINE_VARIANT_FIELDS = ("label_name", "dosage_frequency", "instruction_time",
 
 
 def search_medicine_rows_in_db(drug_name: str) -> list[dict]:
-    if not supabase or not drug_name:
+    if not is_database_available() or not drug_name:
         return []
 
     try:
-        search_query = f"generic_name.ilike.%{drug_name}%,trade_name.ilike.%{drug_name}%"
-        response = supabase.table("Medication_VQA").select("*").or_(search_query).execute()
-        return response.data or []
+        return search_medication_rows(drug_name)
     except Exception as e:
         print(f"⚠️ medicine row search failed for '{drug_name}': {e}")
         return []
@@ -3147,17 +3141,17 @@ def rank_medicine_rows(rows: list[dict], candidates: list[str], ocr_data: dict |
 
 
 def search_medicine_fuzzy_rows_in_db(candidates: list[str], threshold: float = 0.86) -> list[dict]:
-    if not supabase:
+    if not is_database_available():
         return []
 
     try:
-        response = supabase.table("Medication_VQA").select("*").execute()
+        rows = fetch_all_medication_rows()
     except Exception as e:
         print(f"⚠️ fuzzy medicine search skipped: {e}")
         return []
 
     matched_rows = []
-    for row in response.data or []:
+    for row in rows:
         best_score = 0.0
         for candidate in candidates:
             for field in MEDICINE_NAME_FIELDS:
@@ -3891,9 +3885,7 @@ def handle_postback(event):
         is_bedtime = "bedtime" in time_str
 
         try:
-            user_check = supabase.table("user_profiles").select("line_uid").eq("line_uid", user_id).execute()
-            if not user_check.data:
-                supabase.table("user_profiles").insert({"line_uid": user_id}).execute()
+            ensure_user_profile(user_id)
 
             # 👇 เพิ่มคอลัมน์ meal_timing เข้าไปในข้อมูลที่จะบันทึก
             reminder_payload = {
@@ -3906,7 +3898,7 @@ def handle_postback(event):
                 "bedtime": is_bedtime,
                 "meal_timing": meal_timing # 👈 บันทึกลง Supabase ตรงนี้
             }
-            supabase.table("reminder_schedules").insert(reminder_payload).execute()
+            create_reminder_schedule(reminder_payload)
 
             reply_text = build_reminder_saved_reply(user_language, drug_name, meal_timing)
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
@@ -3937,7 +3929,7 @@ def handle_postback(event):
             drug_name = postback_dict.get("drug", "")
             try:
                 # อัปเดตให้ยาตัวนี้ is_active = False ในฐานข้อมูล
-                supabase.table("reminder_schedules").update({"is_active": False}).eq("line_uid", user_id).eq("drug_name", drug_name).execute()
+                deactivate_reminder(user_id, drug_name)
                 
                 reply_text = build_stop_drug_reply(user_language, drug_name)
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
@@ -3993,14 +3985,7 @@ def handle_postback(event):
                 # เติมวินาทีให้ครบฟอร์แมต time ของ DB (HH:MM:SS)
                 db_time = f"{selected_time}:00"
                 
-                # เช็คก่อนว่ามี Profile User คนนี้หรือยัง
-                user_check = supabase.table("user_profiles").select("line_uid").eq("line_uid", user_id).execute()
-                if not user_check.data:
-                    # ถ้ายังไม่มีให้สร้างใหม่พร้อมเวลาที่เลือก
-                    supabase.table("user_profiles").insert({"line_uid": user_id, meal_col: db_time}).execute()
-                else:
-                    # ถ้ามีแล้วให้อัปเดตเวลาทับลงไป
-                    supabase.table("user_profiles").update({meal_col: db_time}).eq("line_uid", user_id).execute()
+                update_user_default_time(user_id, meal_col, db_time)
 
                 reply_text = f"✅ บันทึกเวลาแจ้งเตือน {meal_th} เป็นเวลา {selected_time} น. เรียบร้อยครับ\nระบบจะใช้เวลานี้แจ้งเตือนคุณทุกวันครับ"
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
@@ -4018,19 +4003,19 @@ def test_database_connection(drug_name: str):
     # 1. ปริ้นท์ค่า URL ออกมาดูใน Log ของ Render
     print(f"🔗 [DEBUG] SUPABASE_URL ของคุณคือ: '{SUPABASE_URL}'")
     
-    if not supabase:
+    if not is_database_available():
         return {"status": "error", "message": "ไม่ได้เชื่อมต่อ Supabase Client"}
 
     try:
         # 2. บังคับใช้ชื่อตาราง Medication_VQA
         print(f"🔍 [DEBUG] กำลังค้นหา: {drug_name} ในตาราง Medication_VQA")
-        response = supabase.table('Medication_VQA').select('*').ilike('generic_name', f"%{drug_name}%").execute()
+        rows = search_medication_by_generic_name(drug_name)
         
-        if response.data and len(response.data) > 0:
+        if rows:
             return {
                 "status": "success", 
                 "message": "เย้! ดึงข้อมูลสำเร็จแล้ว",
-                "data": response.data[0]
+                "data": rows[0]
             }
         else:
             return {
@@ -4081,17 +4066,13 @@ def handle_text_message(event):
     if is_drug_list_command(user_text):
         try:
             drug_list_labels = get_drug_list_texts(user_language)
-            res = supabase.table("reminder_schedules") \
-                .select("drug_name, morning, noon, evening, bedtime, meal_timing") \
-                .eq("line_uid", user_id) \
-                .eq("is_active", True) \
-                .execute()
-            if res.data:
+            active_reminders = get_active_reminder_schedules(user_id)
+            if active_reminders:
                 line_bot_api.reply_message(
                     event.reply_token,
                     FlexSendMessage(
                         alt_text=drug_list_labels["alt"],
-                        contents=build_drug_list_flex(user_language, res.data),
+                        contents=build_drug_list_flex(user_language, active_reminders),
                     ),
                 )
             else:
@@ -4108,10 +4089,10 @@ def handle_text_message(event):
     if is_drug_list_command(user_text):
         try:
             # ดึงข้อมูลยาที่ยัง Active อยู่ของลูกค้ารายนี้
-            res = supabase.table("reminder_schedules").select("drug_name, morning, noon, evening, bedtime").eq("line_uid", user_id).eq("is_active", True).execute()
-            if res.data:
+            active_reminders = get_active_reminder_schedules(user_id)
+            if active_reminders:
                 reply_text = "💊 รายการยาที่คุณต้องทานปัจจุบันมีดังนี้ครับ:\n\n"
-                for item in res.data:
+                for item in active_reminders:
                     meals = []
                     if item.get("morning"): meals.append("เช้า")
                     if item.get("noon"): meals.append("กลางวัน")
@@ -4251,7 +4232,8 @@ def handle_text_message(event):
                 query_vector = embed_res.embeddings[0].values
 
                 # 3.2 นำ Vector ไปค้นหาใน Supabase ผ่าน RPC ฟังก์ชันที่เราสร้างไว้
-                db_res = supabase.rpc(
+                records = match_symptoms(query_vector, match_threshold=0.4, match_count=3)
+                """
                     "match_symptoms", 
                     {
                         "query_embedding": query_vector,
@@ -4260,7 +4242,7 @@ def handle_text_message(event):
                     }
                 ).execute()
                 
-                records = db_res.data
+                """
                 print(f"✅ [Vector Search] ดึงข้อมูลยาที่เกี่ยวข้องมาได้ {len(records)} รายการ")
                 
                 # 👈 เพิ่มบล็อกนี้เพื่อแอบดูคะแนนความเหมือนที่แท้จริง
