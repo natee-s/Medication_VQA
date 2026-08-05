@@ -6,6 +6,7 @@
 
 - `docs/postgres_migration_runbook.md`
 - `docs/supabase_after_migration.md`
+- `docs/monitoring_logs_health.md`
 
 ## 1. ไฟล์ที่ห้าม commit
 
@@ -96,6 +97,14 @@ cd ~/apps/Medication_VQA
 docker compose -f docker-compose.postgres.yml up -d
 docker compose -f docker-compose.ubuntu.yml up -d --build
 ```
+
+Quick health check:
+
+```bash
+bash tools/ubuntu_health_check.sh
+```
+
+ถ้าเห็น `All health checks passed.` แปลว่า service หลัก, domain, PDPA masker, PostgreSQL และ test query ทำงานผ่านในระดับพื้นฐาน
 
 เช็ก container:
 

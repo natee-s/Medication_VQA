@@ -6,6 +6,7 @@
 
 - `docs/production_config_checklist.md`
 - `docs/supabase_after_migration.md`
+- `docs/monitoring_logs_health.md`
 
 ## 1. ภาพรวมระบบ
 
@@ -94,6 +95,19 @@ docker compose -f docker-compose.ubuntu.yml up -d --build pdpa-masker
 ```
 
 ## 4. Health Check
+
+Quick health check หลัง deploy หรือเมื่อสงสัยว่าระบบมีปัญหา:
+
+```bash
+cd ~/apps/Medication_VQA
+bash tools/ubuntu_health_check.sh
+```
+
+ถ้าระบบปกติควรเห็น:
+
+```text
+All health checks passed.
+```
 
 ดูสถานะ container:
 
