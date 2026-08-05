@@ -7,6 +7,7 @@
 - `docs/postgres_migration_runbook.md`
 - `docs/supabase_after_migration.md`
 - `docs/monitoring_logs_health.md`
+- `docs/maintenance_routine.md`
 
 ## 1. ไฟล์ที่ห้าม commit
 

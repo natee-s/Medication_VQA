@@ -7,6 +7,7 @@
 - `docs/production_config_checklist.md`
 - `docs/supabase_after_migration.md`
 - `docs/monitoring_logs_health.md`
+- `docs/maintenance_routine.md`
 
 ## 1. ภาพรวมระบบ
 

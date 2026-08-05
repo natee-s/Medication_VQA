@@ -2,6 +2,11 @@
 
 เอกสารนี้สรุปวิธีจัดการ Supabase หลังระบบ production ย้ายมาใช้ PostgreSQL บน Ubuntu แล้ว
 
+เอกสารที่เกี่ยวข้อง:
+
+- `docs/postgres_migration_runbook.md`
+- `docs/maintenance_routine.md`
+
 ## สถานะปัจจุบัน
 
 ตอนนี้ production ใช้:

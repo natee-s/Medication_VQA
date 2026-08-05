@@ -2,6 +2,12 @@
 
 เอกสารนี้ใช้สำหรับดูแลระบบบน Ubuntu Server หลังย้าย production มาอยู่ที่ `https://ginya.v89tech.com/`
 
+เอกสารที่เกี่ยวข้อง:
+
+- `docs/postgres_migration_runbook.md`
+- `docs/production_config_checklist.md`
+- `docs/maintenance_routine.md`
+
 เป้าหมายของขั้นตอนนี้คือ:
 
 - รู้ว่าระบบยังทำงานปกติหรือไม่
@@ -378,4 +384,3 @@ curl https://ginya.v89tech.com/test-db/AMITRIPTYLINE
 - ทุกวันช่วงทดสอบ production แรกๆ: รัน quick health check 1 ครั้ง
 - ทุกสัปดาห์: ทำ PostgreSQL backup และ safe restore test
 - หลังระบบนิ่ง: ปิด debug image และเก็บ Supabase ไว้เป็น fallback/cold backup ตามเอกสาร `docs/supabase_after_migration.md`
-
