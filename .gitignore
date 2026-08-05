@@ -23,6 +23,7 @@ htmlcov/
 datasets/
 debug_pdpa/
 debug_yolo_local/
+postgres/backups/
 debug_thresh.jpg
 tests/debug_thresh.jpg
 runs/

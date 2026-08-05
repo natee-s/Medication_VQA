@@ -149,7 +149,64 @@ docker compose -f docker-compose.postgres.yml exec db psql -U medication_vqa -d 
 docker compose -f docker-compose.postgres.yml exec db psql -U medication_vqa -d medication_vqa -c 'select source_row_number, trade_name, similarity from public.match_symptoms((select embedding from public."Medication_VQA" where embedding is not null limit 1), 0.1, 3);'
 ```
 
-## 6. ทดสอบผ่าน Main App
+## 6. Backup / Restore PostgreSQL
+
+Backup จะถูกเก็บไว้ใน:
+
+```text
+~/apps/Medication_VQA/postgres/backups/
+```
+
+ไฟล์ backup จริงถูก ignore ด้วย `.gitignore` แล้ว ห้าม commit ไฟล์ backup ขึ้น GitHub
+
+สร้าง backup:
+
+```bash
+cd ~/apps/Medication_VQA
+bash postgres/scripts/backup_postgres.sh
+```
+
+ผลลัพธ์ที่ควรเห็น:
+
+```text
+Backup complete.
+File: /home/v89dev/apps/Medication_VQA/postgres/backups/medication_vqa_YYYYMMDD_HHMMSS.dump
+Checksum: /home/v89dev/apps/Medication_VQA/postgres/backups/medication_vqa_YYYYMMDD_HHMMSS.dump.sha256
+```
+
+ตั้ง retention กี่วันก่อนลบ backup เก่า:
+
+```bash
+RETENTION_DAYS=30 bash postgres/scripts/backup_postgres.sh
+```
+
+ดูไฟล์ backup ทั้งหมด:
+
+```bash
+ls -lh postgres/backups/
+```
+
+เช็ก checksum:
+
+```bash
+sha256sum -c postgres/backups/<backup-file.dump>.sha256
+```
+
+Restore จาก backup:
+
+```bash
+CONFIRM_RESTORE=YES bash postgres/scripts/restore_postgres.sh postgres/backups/<backup-file.dump>
+```
+
+คำเตือน: restore เป็นคำสั่งที่มีผลกับข้อมูลใน database ปัจจุบัน ให้ใช้เมื่อจำเป็นหรือเมื่อตั้งใจทดสอบ restore เท่านั้น
+
+หลัง restore ให้เช็กจำนวนข้อมูลยา:
+
+```bash
+docker compose -f docker-compose.postgres.yml exec db psql -U medication_vqa -d medication_vqa -c 'select count(*) from public."Medication_VQA";'
+```
+
+## 7. ทดสอบผ่าน Main App
 
 หลังตั้ง `DB_BACKEND=postgres` แล้ว restart main app:
 
@@ -172,7 +229,7 @@ curl https://ginya.v89tech.com/test-db/AMITRIPTYLINE
 3. ถ่ายผ่าน LIFF Camera
 4. กด Rich menu: `ยาที่ต้องกิน`, `เวลาแจ้งเตือน`, `เปลี่ยนภาษา`
 
-## 7. ดู Logs
+## 8. ดู Logs
 
 ดู log main app:
 
@@ -198,7 +255,7 @@ docker compose -f docker-compose.postgres.yml logs -f db
 Ctrl + C
 ```
 
-## 8. Rollback กลับ Supabase
+## 9. Rollback กลับ Supabase
 
 ใช้เมื่อ PostgreSQL มีปัญหาและต้องการให้ระบบกลับไปใช้ Supabase ชั่วคราว
 
@@ -234,7 +291,7 @@ curl https://ginya.v89tech.com/
 curl https://ginya.v89tech.com/test-db/AMITRIPTYLINE
 ```
 
-## 9. Deploy Code Update
+## 10. Deploy Code Update
 
 เมื่อมีการ push code จากเครื่อง local ขึ้น GitHub แล้ว ให้ทำบน Ubuntu:
 
@@ -246,15 +303,16 @@ docker compose -f docker-compose.ubuntu.yml up -d --build
 
 ถ้ามีการเปลี่ยน schema หรือ PostgreSQL init script ต้องวางแผนแยกก่อน เพราะ `postgres/init/*.sql` จะรันอัตโนมัติเฉพาะตอนสร้าง database volume ใหม่เท่านั้น ไม่ได้รันซ้ำทุกครั้งที่ restart container
 
-## 10. จุดที่ต้องระวัง
+## 11. จุดที่ต้องระวัง
 
 - อย่า commit `.env` จริงขึ้น GitHub
 - อย่าลบ Supabase จนกว่าจะมี backup/restore PostgreSQL ที่ทดสอบแล้ว
+- อย่า commit ไฟล์ใน `postgres/backups/` ขึ้น GitHub
 - อย่าลบ Docker volume `postgres_data` ถ้ายังไม่ได้ backup เพราะข้อมูล PostgreSQL อยู่ใน volume นี้
 - ถ้าแก้ `POSTGRES_PASSWORD` หลังสร้าง database แล้ว อาจต้องจัดการ user/password ใน PostgreSQL เพิ่ม ไม่ใช่เปลี่ยน `.env` อย่างเดียว
 - ถ้าเปลี่ยน YOLO model path ต้องเช็กว่าไฟล์ model อยู่ใน `models/yolo_obb/` บน server แล้ว
 
-## 11. คำสั่งฉุกเฉิน
+## 12. คำสั่งฉุกเฉิน
 
 ดู container ทั้งหมด:
 
