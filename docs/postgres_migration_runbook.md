@@ -200,6 +200,24 @@ CONFIRM_RESTORE=YES bash postgres/scripts/restore_postgres.sh postgres/backups/<
 
 คำเตือน: restore เป็นคำสั่งที่มีผลกับข้อมูลใน database ปัจจุบัน ให้ใช้เมื่อจำเป็นหรือเมื่อตั้งใจทดสอบ restore เท่านั้น
 
+ทดสอบ restore แบบปลอดภัย โดยกู้ไฟล์ backup เข้า PostgreSQL container ชั่วคราว ไม่กระทบ database จริง:
+
+```bash
+bash postgres/scripts/test_restore_postgres.sh postgres/backups/<backup-file.dump>
+```
+
+ถ้าสำเร็จจะเห็นข้อความ:
+
+```text
+Safe restore test completed successfully.
+```
+
+สคริปต์นี้จะลบ container/volume ทดสอบให้อัตโนมัติหลังจบงาน ถ้าต้องการเก็บ container ทดสอบไว้ตรวจเอง ให้ใช้:
+
+```bash
+KEEP_TEST_RESTORE=YES bash postgres/scripts/test_restore_postgres.sh postgres/backups/<backup-file.dump>
+```
+
 หลัง restore ให้เช็กจำนวนข้อมูลยา:
 
 ```bash
