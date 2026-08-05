@@ -2,6 +2,11 @@
 
 เอกสารนี้ใช้สำหรับดูแลระบบหลังย้ายฐานข้อมูลจาก Supabase Database มาเป็น PostgreSQL บน Ubuntu Server โดยยังเก็บ Supabase ไว้เป็น backup และ rollback ได้ผ่านค่า `.env`
 
+เอกสารที่เกี่ยวข้อง:
+
+- `docs/production_config_checklist.md`
+- `docs/supabase_after_migration.md`
+
 ## 1. ภาพรวมระบบ
 
 ระบบปัจจุบันบน Ubuntu ใช้ Docker แยกเป็น 3 ส่วนหลัก:

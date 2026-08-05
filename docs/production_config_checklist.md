@@ -2,6 +2,11 @@
 
 เอกสารนี้ใช้เช็กค่าบน Ubuntu Server ก่อน deploy หรือหลังแก้ `.env`
 
+เอกสารที่เกี่ยวข้อง:
+
+- `docs/postgres_migration_runbook.md`
+- `docs/supabase_after_migration.md`
+
 ## 1. ไฟล์ที่ห้าม commit
 
 ไฟล์เหล่านี้ต้องอยู่เฉพาะบนเครื่อง/server และห้าม commit ขึ้น GitHub:
