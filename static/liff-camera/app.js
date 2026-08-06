@@ -25,6 +25,7 @@ const cameraShell = document.querySelector(".camera-shell");
 const FALLBACK_MESSAGES = {
   document_title: "Medication Label Camera",
   processing: "กำลังประมวลผล...",
+  processing_captured: "ถ่ายรูปเรียบร้อยแล้ว กำลังประมวลผล...",
   guide_header: "ส่วนหัวฉลาก",
   guide_body: "ชื่อยาและวิธีใช้",
   title: "ถ่ายฉลากยา",
@@ -822,7 +823,7 @@ async function captureGuideFrame() {
   captureButton.disabled = true;
   updateSwitchCameraVisibility();
   setStatus("");
-  setProcessingMode(true);
+  setProcessingMode(true, t("processing_captured"));
 
   const source = getGuideSourceRect();
   const context = canvas.getContext("2d", { alpha: false });

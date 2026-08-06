@@ -156,6 +156,8 @@ class LiffCameraTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("loadLiffMessages", script_response.text)
         self.assertIn("applyTranslations", script_response.text)
         self.assertIn("cameraShell.classList.toggle", script_response.text)
+        self.assertIn("processing_captured", script_response.text)
+        self.assertIn('setProcessingMode(true, t("processing_captured"))', script_response.text)
         self.assertIn("status_camera_denied", script_response.text)
 
     async def test_liff_camera_js_closes_liff_window_after_successful_upload(self):
@@ -215,6 +217,7 @@ class LiffCameraTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["language"], "zh")
         self.assertEqual(body["messages"]["capture_button"], "拍照")
         self.assertEqual(body["messages"]["switch_camera_button"], "切换相机")
+        self.assertEqual(body["messages"]["processing_captured"], "拍照完成，正在处理...")
         self.assertIn("status_upload_success", body["messages"])
 
     async def test_liff_messages_falls_back_to_thai_without_line_user_id(self):
@@ -228,6 +231,7 @@ class LiffCameraTests(unittest.IsolatedAsyncioTestCase):
         body = response.json()
         self.assertEqual(body["language"], "th")
         self.assertEqual(body["messages"]["capture_button"], "ถ่ายรูป")
+        self.assertEqual(body["messages"]["processing_captured"], "ถ่ายรูปเรียบร้อยแล้ว กำลังประมวลผล...")
 
     async def test_liff_upload_label_records_line_user_id_metadata(self):
         import main

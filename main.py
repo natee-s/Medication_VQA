@@ -1631,6 +1631,7 @@ LIFF_CAMERA_MESSAGES = {
     "th": {
         "document_title": "Medication Label Camera",
         "processing": "กำลังประมวลผล...",
+        "processing_captured": "ถ่ายรูปเรียบร้อยแล้ว กำลังประมวลผล...",
         "guide_header": "ส่วนหัวฉลาก",
         "guide_body": "ชื่อยาและวิธีใช้",
         "title": "ถ่ายฉลากยา",
@@ -1655,6 +1656,7 @@ LIFF_CAMERA_MESSAGES = {
     "en": {
         "document_title": "Medication Label Camera",
         "processing": "Processing...",
+        "processing_captured": "Photo captured. Processing...",
         "guide_header": "Label header",
         "guide_body": "Medicine name and directions",
         "title": "Capture Medicine Label",
@@ -1679,6 +1681,7 @@ LIFF_CAMERA_MESSAGES = {
     "my": {
         "document_title": "ဆေးတံဆိပ်ကင်မရာ",
         "processing": "လုပ်ဆောင်နေသည်...",
+        "processing_captured": "ဓာတ်ပုံရိုက်ပြီးပါပြီ။ လုပ်ဆောင်နေသည်...",
         "guide_header": "တံဆိပ်ခေါင်းပိုင်း",
         "guide_body": "ဆေးအမည်နှင့် သုံးစွဲနည်း",
         "title": "ဆေးတံဆိပ်ကို ဓာတ်ပုံရိုက်ပါ",
@@ -1703,6 +1706,7 @@ LIFF_CAMERA_MESSAGES = {
     "lo": {
         "document_title": "ກ້ອງຖ່າຍສະຫຼາກຢາ",
         "processing": "ກຳລັງປະມວນຜົນ...",
+        "processing_captured": "ຖ່າຍຮູບສຳເລັດແລ້ວ ກຳລັງປະມວນຜົນ...",
         "guide_header": "ສ່ວນຫົວສະຫຼາກ",
         "guide_body": "ຊື່ຢາ ແລະ ວິທີໃຊ້",
         "title": "ຖ່າຍສະຫຼາກຢາ",
@@ -1727,6 +1731,7 @@ LIFF_CAMERA_MESSAGES = {
     "zh": {
         "document_title": "药品标签相机",
         "processing": "处理中...",
+        "processing_captured": "拍照完成，正在处理...",
         "guide_header": "标签顶部",
         "guide_body": "药名和用法",
         "title": "拍摄药品标签",
