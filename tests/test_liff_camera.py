@@ -80,6 +80,29 @@ class LiffCameraTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("result.processing_queued", script)
         self.assertIn('setStatusKey("status_upload_success")', script)
 
+    async def test_liff_camera_js_uses_safe_rear_camera_fallbacks(self):
+        import main
+
+        transport = httpx.ASGITransport(app=main.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            script_response = await client.get("/static/liff-camera/app.js")
+            css_response = await client.get("/static/liff-camera/style.css")
+
+        self.assertEqual(script_response.status_code, 200)
+        self.assertEqual(css_response.status_code, 200)
+        script = script_response.text
+        css = css_response.text
+        self.assertIn("CAMERA_IDEAL_WIDTH", script)
+        self.assertIn("requestCameraStreamWithFallbacks", script)
+        self.assertIn("maybeSwitchToBetterRearCamera", script)
+        self.assertIn("scoreCameraLabel", script)
+        self.assertIn("optimizeCameraTrack", script)
+        self.assertIn("normalizeCameraFocus", script)
+        self.assertIn("cameraDebugMode", script)
+        self.assertIn('facingMode: { ideal: "environment" }', script)
+        self.assertNotIn('facingMode: { exact: "environment" }', script)
+        self.assertIn("object-fit: contain", css)
+
     async def test_liff_camera_uploads_masked_blob_without_showing_masked_preview(self):
         import main
 

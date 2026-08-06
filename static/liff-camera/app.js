@@ -2,6 +2,9 @@ const OUTPUT_WIDTH = 1344;
 const OUTPUT_HEIGHT = 1000;
 const JPEG_QUALITY = 0.9;
 const PDPA_MASK_RATIO = 0.25;
+const CAMERA_IDEAL_WIDTH = 1920;
+const CAMERA_IDEAL_HEIGHT = 1440;
+const CAMERA_IDEAL_ASPECT_RATIO = 4 / 3;
 
 const video = document.getElementById("cameraPreview");
 const canvas = document.getElementById("captureCanvas");
@@ -45,6 +48,7 @@ let lineUserId = "";
 let isCapturing = false;
 let uiMessages = { ...FALLBACK_MESSAGES };
 let currentStatusKey = "";
+const cameraDebugMode = new URLSearchParams(window.location.search).has("debug");
 
 function t(key) {
   return uiMessages[key] || FALLBACK_MESSAGES[key] || key;
@@ -133,22 +137,19 @@ async function startCamera() {
 
   try {
     stream = await requestRearCameraStream();
-    await normalizeCameraZoom(stream);
+    await optimizeCameraTrack(stream);
     video.srcObject = stream;
     await video.play().catch(() => {});
 
     const [track] = stream.getVideoTracks();
-    const settings = track?.getSettings?.() || {};
-    console.info("LIFF camera ready", {
-      label: track?.label || "unknown",
-      facingMode: settings.facingMode || "unknown",
-      width: settings.width || 0,
-      height: settings.height || 0,
-      zoom: settings.zoom ?? "not-reported",
-    });
+    logCameraInfo("LIFF camera ready", track);
 
     captureButton.disabled = false;
-    setStatusKey("status_align_label");
+    if (cameraDebugMode) {
+      setStatus(formatCameraDebugInfo(track));
+    } else {
+      setStatusKey("status_align_label");
+    }
   } catch (error) {
     console.error(error);
     stopCameraStream();
@@ -158,30 +159,137 @@ async function startCamera() {
 }
 
 async function requestRearCameraStream() {
-  try {
-    return await navigator.mediaDevices.getUserMedia({
+  const initialStream = await requestCameraStreamWithFallbacks();
+  const selectedStream = await maybeSwitchToBetterRearCamera(initialStream);
+  return selectedStream;
+}
+
+function preferredVideoConstraints(extra = {}) {
+  return {
+    width: { ideal: CAMERA_IDEAL_WIDTH },
+    height: { ideal: CAMERA_IDEAL_HEIGHT },
+    aspectRatio: { ideal: CAMERA_IDEAL_ASPECT_RATIO },
+    resizeMode: "none",
+    ...extra,
+  };
+}
+
+async function requestCameraStreamWithFallbacks() {
+  const attempts = [
+    {
+      video: preferredVideoConstraints({
+        facingMode: { ideal: "environment" },
+      }),
+      audio: false,
+    },
+    {
       video: {
-        facingMode: { exact: "environment" },
+        facingMode: { ideal: "environment" },
       },
       audio: false,
+    },
+    {
+      video: true,
+      audio: false,
+    },
+  ];
+
+  let lastError = null;
+  for (const constraints of attempts) {
+    try {
+      return await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (error) {
+      lastError = error;
+      if (error?.name === "NotAllowedError" || error?.name === "SecurityError") {
+        throw error;
+      }
+      console.warn("Camera constraint attempt failed", constraints, error);
+    }
+  }
+
+  throw lastError || new Error("Camera stream unavailable");
+}
+
+async function maybeSwitchToBetterRearCamera(initialStream) {
+  if (!navigator.mediaDevices?.enumerateDevices) {
+    return initialStream;
+  }
+
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const videoInputs = devices.filter((device) => device.kind === "videoinput" && device.deviceId);
+    if (cameraDebugMode) {
+      console.info("LIFF available video inputs", videoInputs.map((device) => ({
+        label: device.label || "unknown",
+        deviceId: device.deviceId,
+        score: scoreCameraLabel(device.label),
+      })));
+    }
+
+    if (videoInputs.length < 2 || videoInputs.every((device) => !device.label)) {
+      return initialStream;
+    }
+
+    const [currentTrack] = initialStream.getVideoTracks();
+    const currentLabel = currentTrack?.label || "";
+    const currentScore = scoreCameraLabel(currentLabel);
+    const candidates = videoInputs
+      .filter((device) => !isBadRearCameraLabel(device.label))
+      .sort((a, b) => scoreCameraLabel(b.label) - scoreCameraLabel(a.label));
+    const bestCandidate = candidates[0];
+
+    if (!bestCandidate || scoreCameraLabel(bestCandidate.label) <= currentScore) {
+      return initialStream;
+    }
+
+    const replacementStream = await navigator.mediaDevices.getUserMedia({
+      video: preferredVideoConstraints({
+        deviceId: { exact: bestCandidate.deviceId },
+      }),
+      audio: false,
     });
+
+    stopSpecificStream(initialStream);
+    return replacementStream;
   } catch (error) {
     if (error?.name === "NotAllowedError" || error?.name === "SecurityError") {
       throw error;
     }
 
-    console.warn("Exact rear camera unavailable; using preferred rear camera", error);
-    return navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: { ideal: "environment" },
-      },
-      audio: false,
-    });
+    console.warn("Rear camera selection fallback kept initial stream", error);
+    return initialStream;
   }
 }
 
-async function normalizeCameraZoom(mediaStream) {
+function scoreCameraLabel(label = "") {
+  const normalized = label.toLowerCase();
+  let score = 0;
+
+  if (/(back|rear|environment|หลัง)/.test(normalized)) score += 40;
+  if (/(wide|main|1x|standard|normal)/.test(normalized)) score += 18;
+  if (/(front|user|หน้า|selfie)/.test(normalized)) score -= 80;
+  if (/(tele|telephoto|zoom|portrait|depth|macro)/.test(normalized)) score -= 60;
+  if (/(ultra|0\.5x)/.test(normalized)) score -= 10;
+
+  return score;
+}
+
+function isBadRearCameraLabel(label = "") {
+  const normalized = label.toLowerCase();
+  return /(front|user|หน้า|selfie|tele|telephoto|zoom|portrait|depth|macro)/.test(normalized);
+}
+
+async function optimizeCameraTrack(mediaStream) {
   const [track] = mediaStream?.getVideoTracks?.() || [];
+  if (!track?.getCapabilities || !track?.getSettings || !track?.applyConstraints) {
+    return;
+  }
+
+  await normalizeCameraZoom(track);
+  await normalizeCameraFocus(track);
+}
+
+async function normalizeCameraZoom(track) {
   if (!track?.getCapabilities || !track?.getSettings || !track?.applyConstraints) {
     return;
   }
@@ -193,29 +301,88 @@ async function normalizeCameraZoom(mediaStream) {
   const maxZoom = Number(capabilities.zoom?.max);
 
   if (
-    !Number.isFinite(currentZoom) ||
-    currentZoom <= 1.01 ||
     !Number.isFinite(minZoom) ||
     !Number.isFinite(maxZoom) ||
-    minZoom > 1 ||
-    maxZoom < 1
+    minZoom > maxZoom
   ) {
     return;
   }
 
+  const targetZoom = Math.max(minZoom, Math.min(1, maxZoom));
+  if (Number.isFinite(currentZoom) && Math.abs(currentZoom - targetZoom) < 0.01) {
+    return;
+  }
+
   try {
-    await track.applyConstraints({ zoom: 1 });
+    await track.applyConstraints({ advanced: [{ zoom: targetZoom }] });
   } catch (error) {
     console.warn("Camera 1x normalization skipped", error);
   }
 }
 
+async function normalizeCameraFocus(track) {
+  if (!track?.getCapabilities || !track?.applyConstraints) {
+    return;
+  }
+
+  const capabilities = track.getCapabilities();
+  const advanced = [];
+  if (Array.isArray(capabilities.focusMode) && capabilities.focusMode.includes("continuous")) {
+    advanced.push({ focusMode: "continuous" });
+  }
+  if (Array.isArray(capabilities.exposureMode) && capabilities.exposureMode.includes("continuous")) {
+    advanced.push({ exposureMode: "continuous" });
+  }
+  if (Array.isArray(capabilities.whiteBalanceMode) && capabilities.whiteBalanceMode.includes("continuous")) {
+    advanced.push({ whiteBalanceMode: "continuous" });
+  }
+
+  if (!advanced.length) {
+    return;
+  }
+
+  try {
+    await track.applyConstraints({ advanced });
+  } catch (error) {
+    console.warn("Camera focus/exposure normalization skipped", error);
+  }
+}
+
+function stopSpecificStream(mediaStream) {
+  mediaStream?.getTracks?.().forEach((track) => track.stop());
+}
+
 function stopCameraStream() {
   if (stream) {
-    stream.getTracks().forEach((track) => track.stop());
+    stopSpecificStream(stream);
     stream = null;
   }
   video.srcObject = null;
+}
+
+function logCameraInfo(label, track) {
+  const settings = track?.getSettings?.() || {};
+  const capabilities = track?.getCapabilities?.() || {};
+  console.info(label, {
+    label: track?.label || "unknown",
+    facingMode: settings.facingMode || "unknown",
+    width: settings.width || 0,
+    height: settings.height || 0,
+    aspectRatio: settings.aspectRatio || "not-reported",
+    zoom: settings.zoom ?? "not-reported",
+    zoomMin: capabilities.zoom?.min ?? "not-reported",
+    zoomMax: capabilities.zoom?.max ?? "not-reported",
+    focusMode: settings.focusMode || "not-reported",
+  });
+}
+
+function formatCameraDebugInfo(track) {
+  const settings = track?.getSettings?.() || {};
+  return [
+    track?.label || "camera",
+    `${settings.width || 0}x${settings.height || 0}`,
+    `zoom:${settings.zoom ?? "n/a"}`,
+  ].join(" | ");
 }
 
 async function initializeLiff() {
