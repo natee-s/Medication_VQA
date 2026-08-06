@@ -2095,8 +2095,41 @@ Required JSON keys:
     return display_data
 
 
+def is_unspecified_medicine_name(value) -> bool:
+    text = re.sub(r"\s+", " ", str(value or "").strip()).casefold()
+    if not text:
+        return True
+
+    placeholders = {
+        "-",
+        "n/a",
+        "na",
+        "none",
+        "null",
+        "unknown",
+        "not specified",
+        "ไม่ระบุ",
+    }
+    for language in SUPPORTED_LANGUAGES:
+        placeholders.add(re.sub(r"\s+", " ", t(language, "not_specified")).casefold())
+
+    return text in placeholders
+
+
+def get_medicine_display_name(medicine_data: dict, lang: str) -> str:
+    generic_name = medicine_data.get("generic_name")
+    if not is_unspecified_medicine_name(generic_name):
+        return str(generic_name).strip()
+
+    trade_name = medicine_data.get("trade_name")
+    if not is_unspecified_medicine_name(trade_name):
+        return str(trade_name).strip()
+
+    return t(lang, "not_specified")
+
+
 def build_medicine_label_flex_reply(lang: str, display_data: dict, time_payload: str, meal_timing: str) -> dict:
-    generic_name = display_data.get("generic_name") or t(lang, "not_specified")
+    generic_name = get_medicine_display_name(display_data, lang)
     return {
         "type": "bubble",
         "size": "mega",
@@ -2407,7 +2440,13 @@ def build_drug_list_flex(lang: str, reminders: list[dict]) -> dict:
             if item.get(meal)
         ]
         meal_text = " / ".join(meal_displays) if meal_displays else labels["empty_meal"]
-        drug_name = item.get("drug_name") or t(lang, "not_specified")
+        drug_name = get_medicine_display_name(
+            {
+                "generic_name": item.get("drug_name"),
+                "trade_name": item.get("trade_name"),
+            },
+            lang,
+        )
 
         if item_contents:
             item_contents.append({"type": "separator", "margin": "md"})
@@ -3419,7 +3458,7 @@ def _handle_image_impl(event, user_language: str):
 
         db_data = match_result["db_data"]
         display_data = build_medicine_label_display_data(ai_client, db_data, user_language)
-        generic_name = display_data.get("generic_name") or t(user_language, "not_specified")
+        generic_name = get_medicine_display_name(display_data, user_language)
         instruction_for_reminder = db_data.get("instruction_time") or ""
         time_payload, meal_timing = build_reminder_payload_from_instruction(instruction_for_reminder)
 
@@ -3501,7 +3540,7 @@ def _handle_image_impl(event, user_language: str):
             
             # จัดเตรียมข้อมูลใส่ Flex Message
             display_data = build_medicine_label_display_data(ai_client, db_data, user_language)
-            generic_name = display_data.get("generic_name") or t(user_language, "not_specified")
+            generic_name = get_medicine_display_name(display_data, user_language)
             instruction_for_reminder = db_data.get('instruction_time') or ''
 
             # ----------------------------------------------------
@@ -3791,7 +3830,7 @@ def build_liff_label_result_message(user_id: str, source_image_path: str, upload
             return TextSendMessage(text=t(user_language, "ocr_no_database_match", drug=matched_keyword or search_candidates[0]))
 
         display_data = build_medicine_label_display_data(ai_client, db_data, user_language)
-        generic_name = display_data.get("generic_name") or t(user_language, "not_specified")
+        generic_name = get_medicine_display_name(display_data, user_language)
         instruction_for_reminder = db_data.get("instruction_time") or ""
         time_payload, meal_timing = build_reminder_payload_from_instruction(instruction_for_reminder)
 

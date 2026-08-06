@@ -325,6 +325,48 @@ class MainRagFlexLocalizationTests(unittest.TestCase):
 
 
 class MainMedicineLabelFlexLocalizationTests(unittest.TestCase):
+    def test_medicine_display_name_falls_back_to_trade_name_when_generic_is_unspecified(self):
+        import main
+
+        display_data = {
+            "trade_name": "PROCTASE-P CAPSULES 10 S",
+            "generic_name": main.t("th", "not_specified"),
+            "indication": "ลดอักเสบ ลดบวม",
+            "dosage": "ทานครั้งละ 1-2 เม็ด วันละ 3 ครั้ง",
+            "instruction": "หลังอาหาร เช้า-กลางวัน-เย็น",
+            "warning": main.t("th", "no_warning"),
+        }
+
+        self.assertEqual(
+            main.get_medicine_display_name(display_data, "th"),
+            "PROCTASE-P CAPSULES 10 S",
+        )
+
+        flex = main.build_medicine_label_flex_reply(
+            "th",
+            display_data,
+            time_payload="morning,noon,evening",
+            meal_timing="after",
+        )
+
+        generic_line = flex["body"]["contents"][1]["text"]
+        reminder_action = flex["footer"]["contents"][0]["action"]["data"]
+        self.assertIn("PROCTASE-P CAPSULES 10 S", generic_line)
+        self.assertIn("drug=PROCTASE-P CAPSULES 10 S", reminder_action)
+
+    def test_medicine_display_name_prefers_generic_when_available(self):
+        import main
+
+        display_data = {
+            "trade_name": "MYOXAN 50 MG 10'S",
+            "generic_name": "TOLPERISONE 50 mg",
+        }
+
+        self.assertEqual(
+            main.get_medicine_display_name(display_data, "th"),
+            "TOLPERISONE 50 mg",
+        )
+
     def test_medicine_label_flex_uses_selected_language_for_static_labels(self):
         import main
 
@@ -389,6 +431,40 @@ class MainMedicineLabelFlexLocalizationTests(unittest.TestCase):
 
 
 class MainReminderLocalizationTests(unittest.TestCase):
+    def test_drug_list_flex_falls_back_to_trade_name_when_saved_drug_name_is_unspecified(self):
+        import main
+
+        flex = main.build_drug_list_flex(
+            "th",
+            [
+                {
+                    "drug_name": main.t("th", "not_specified"),
+                    "trade_name": "PROCTASE-P CAPSULES 10 S",
+                    "morning": True,
+                    "noon": True,
+                    "evening": True,
+                    "bedtime": False,
+                    "meal_timing": "after",
+                }
+            ],
+        )
+
+        item_texts = []
+
+        def collect_texts(node):
+            if isinstance(node, dict):
+                if node.get("type") == "text":
+                    item_texts.append(node.get("text"))
+                for value in node.values():
+                    collect_texts(value)
+            elif isinstance(node, list):
+                for value in node:
+                    collect_texts(value)
+
+        collect_texts(flex)
+        self.assertIn("PROCTASE-P CAPSULES 10 S", item_texts)
+        self.assertNotIn(main.t("th", "not_specified"), item_texts)
+
     def test_postback_reply_text_uses_selected_language(self):
         import main
 
