@@ -47,7 +47,7 @@ from services.database_service import (
     set_user_language,
     update_user_default_time,
 )
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, urlencode
 from datetime import datetime
 import pytz
 import logging
@@ -2128,6 +2128,21 @@ def get_medicine_display_name(medicine_data: dict, lang: str) -> str:
     return t(lang, "not_specified")
 
 
+def build_set_reminder_postback_data(display_data: dict, lang: str, time_payload: str, meal_timing: str) -> str:
+    drug_name = get_medicine_display_name(display_data, lang)
+    trade_name = display_data.get("trade_name")
+    trade_name = "" if is_unspecified_medicine_name(trade_name) else str(trade_name).strip()
+    query = urlencode(
+        {
+            "drug": drug_name,
+            "trade": trade_name,
+            "time": time_payload,
+            "timing": meal_timing,
+        }
+    )
+    return f"action=set_reminder&{query}"
+
+
 def build_medicine_label_flex_reply(lang: str, display_data: dict, time_payload: str, meal_timing: str) -> dict:
     generic_name = get_medicine_display_name(display_data, lang)
     return {
@@ -2204,7 +2219,7 @@ def build_medicine_label_flex_reply(lang: str, display_data: dict, time_payload:
                     "action": {
                         "type": "postback",
                         "label": f"⏰ {t(lang, 'set_reminder_button')}",
-                        "data": f"action=set_reminder&drug={generic_name}&time={time_payload}&timing={meal_timing}",
+                        "data": build_set_reminder_postback_data(display_data, lang, time_payload, meal_timing),
                     },
                 },
                 {
@@ -3922,6 +3937,7 @@ def handle_postback(event):
         postback_dict = dict(parse_qsl(data))
         
         drug_name = postback_dict.get("drug", "ยาของคุณ")
+        trade_name = postback_dict.get("trade") or postback_dict.get("trade_name") or ""
         time_str = postback_dict.get("time", "")
         # 👇 รับค่าก่อน/หลังอาหารที่แอบส่งมา (ถ้าไม่มีให้เป็น after)
         meal_timing = postback_dict.get("timing", "after") 
@@ -3940,6 +3956,7 @@ def handle_postback(event):
             reminder_payload = {
                 "line_uid": user_id,
                 "drug_name": drug_name,
+                "trade_name": trade_name,
                 "is_active": True,
                 "morning": is_morning,
                 "noon": is_noon,

@@ -3,6 +3,7 @@ import sys
 import types
 import unittest
 from pathlib import Path
+from urllib.parse import parse_qsl
 
 from linebot.exceptions import LineBotApiError
 
@@ -351,8 +352,11 @@ class MainMedicineLabelFlexLocalizationTests(unittest.TestCase):
 
         generic_line = flex["body"]["contents"][1]["text"]
         reminder_action = flex["footer"]["contents"][0]["action"]["data"]
+        reminder_params = dict(parse_qsl(reminder_action))
         self.assertIn("PROCTASE-P CAPSULES 10 S", generic_line)
-        self.assertIn("drug=PROCTASE-P CAPSULES 10 S", reminder_action)
+        self.assertEqual(reminder_params["action"], "set_reminder")
+        self.assertEqual(reminder_params["drug"], "PROCTASE-P CAPSULES 10 S")
+        self.assertEqual(reminder_params["trade"], "PROCTASE-P CAPSULES 10 S")
 
     def test_medicine_display_name_prefers_generic_when_available(self):
         import main

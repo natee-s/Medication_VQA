@@ -37,6 +37,7 @@ create table if not exists public.reminder_schedules (
     bedtime boolean default false,
     is_active boolean default true,
     created_at timestamptz default now(),
+    trade_name text,
     meal_timing text
 );
 

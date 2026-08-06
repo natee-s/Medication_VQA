@@ -253,7 +253,7 @@ def get_active_reminder_drugs(line_uid: str, meal_col: str, meal_timing: str) ->
     if not _use_postgres():
         res = (
             supabase.table("reminder_schedules")
-            .select("drug_name")
+            .select("drug_name, trade_name")
             .eq("line_uid", line_uid)
             .eq("is_active", True)
             .eq(meal_col, True)
@@ -264,7 +264,7 @@ def get_active_reminder_drugs(line_uid: str, meal_col: str, meal_timing: str) ->
 
     return _fetch_all(
         f"""
-        select drug_name
+        select drug_name, trade_name
         from public.reminder_schedules
         where line_uid = %s
           and is_active is true
@@ -279,7 +279,7 @@ def get_active_reminder_schedules(line_uid: str) -> list[dict]:
     if not is_database_available():
         return []
 
-    columns = "drug_name, morning, noon, evening, bedtime, meal_timing"
+    columns = "drug_name, trade_name, morning, noon, evening, bedtime, meal_timing"
     if not _use_postgres():
         res = (
             supabase.table("reminder_schedules")
@@ -292,7 +292,7 @@ def get_active_reminder_schedules(line_uid: str) -> list[dict]:
 
     return _fetch_all(
         """
-        select drug_name, morning, noon, evening, bedtime, meal_timing
+        select drug_name, trade_name, morning, noon, evening, bedtime, meal_timing
         from public.reminder_schedules
         where line_uid = %s and is_active is true
         """,
@@ -304,6 +304,7 @@ def create_reminder_schedule(payload: dict) -> None:
     if not is_database_available():
         raise RuntimeError("Database is not connected")
 
+    payload = {**payload, "trade_name": payload.get("trade_name")}
     ensure_user_profile(payload.get("line_uid", ""))
     if not _use_postgres():
         supabase.table("reminder_schedules").insert(payload).execute()
@@ -312,9 +313,9 @@ def create_reminder_schedule(payload: dict) -> None:
     _execute(
         """
         insert into public.reminder_schedules
-            (line_uid, drug_name, is_active, morning, noon, evening, bedtime, meal_timing)
+            (line_uid, drug_name, trade_name, is_active, morning, noon, evening, bedtime, meal_timing)
         values
-            (%(line_uid)s, %(drug_name)s, %(is_active)s, %(morning)s, %(noon)s, %(evening)s, %(bedtime)s, %(meal_timing)s)
+            (%(line_uid)s, %(drug_name)s, %(trade_name)s, %(is_active)s, %(morning)s, %(noon)s, %(evening)s, %(bedtime)s, %(meal_timing)s)
         """,
         payload,
     )
