@@ -76,6 +76,7 @@ printf "PUBLIC_BASE_URL=%s\n" "$PUBLIC_BASE_URL"
 section "Required Commands"
 check_cmd docker
 check_cmd curl
+check_cmd crontab
 
 section "Docker Containers"
 docker compose -f docker-compose.postgres.yml ps || fail "docker compose postgres ps failed"
@@ -120,6 +121,25 @@ if vector_result="$(docker compose -f docker-compose.postgres.yml exec -T db sh 
 else
   fail "vector search function failed"
   printf "%s\n" "$vector_result" >&2
+fi
+
+section "Reminder Cron"
+REMINDER_CRON_BEGIN="# BEGIN Medication_VQA reminder cron"
+REMINDER_CRON_END="# END Medication_VQA reminder cron"
+REMINDER_CRON_LOG="${PROJECT_DIR}/logs/reminder_cron.log"
+
+if crontab -l 2>/dev/null | sed -n "/${REMINDER_CRON_BEGIN}/,/${REMINDER_CRON_END}/p" | grep -q .; then
+  pass "reminder cron block installed"
+  crontab -l | sed -n "/${REMINDER_CRON_BEGIN}/,/${REMINDER_CRON_END}/p"
+else
+  fail "reminder cron block not found"
+fi
+
+if [ -f "${REMINDER_CRON_LOG}" ]; then
+  pass "reminder cron log exists"
+  tail -20 "${REMINDER_CRON_LOG}"
+else
+  fail "reminder cron log not found: ${REMINDER_CRON_LOG}"
 fi
 
 section "Disk"
