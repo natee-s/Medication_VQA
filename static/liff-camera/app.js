@@ -6,6 +6,7 @@ const CAMERA_IDEAL_WIDTH = 1920;
 const CAMERA_IDEAL_HEIGHT = 1440;
 const CAMERA_IDEAL_ASPECT_RATIO = 4 / 3;
 const CAMERA_DEVICE_STORAGE_KEY = "medication_label_camera_device_id";
+const CAMERA_PREFERENCE_STORAGE_KEY = "medication_label_camera_preference";
 
 const video = document.getElementById("cameraPreview");
 const canvas = document.getElementById("captureCanvas");
@@ -53,6 +54,7 @@ let isCapturing = false;
 let isSwitchingCamera = false;
 let availableCameraDevices = [];
 let activeCameraDeviceId = "";
+let activeCameraPreference = null;
 let uiMessages = { ...FALLBACK_MESSAGES };
 let currentStatusKey = "";
 const cameraDebugMode = new URLSearchParams(window.location.search).has("debug");
@@ -160,25 +162,23 @@ async function requestRearCameraStream() {
     return savedStream;
   }
 
-  const initialStream = await requestCameraStreamWithFallbacks();
-  const selectedStream = await maybeSwitchToBetterRearCamera(initialStream);
-  return selectedStream;
+  return requestCameraStreamWithFallbacks();
 }
 
 async function requestSavedCameraStream() {
-  const savedDeviceId = getSavedCameraDeviceId();
-  if (!savedDeviceId) {
+  const savedPreference = getSavedCameraPreference();
+  if (!savedPreference) {
     return null;
   }
 
   try {
-    return await requestCameraStreamByDeviceId(savedDeviceId);
+    return await requestCameraStreamByPreference(savedPreference);
   } catch (error) {
     if (error?.name === "NotAllowedError" || error?.name === "SecurityError") {
       throw error;
     }
 
-    clearSavedCameraDeviceId();
+    clearSavedCameraPreference();
     console.warn("Saved camera unavailable; falling back to automatic selection", error);
     return null;
   }
@@ -244,6 +244,18 @@ async function requestCameraStreamByDeviceId(deviceId) {
       },
       audio: false,
     },
+    {
+      video: preferredVideoConstraints({
+        deviceId: { ideal: deviceId },
+      }),
+      audio: false,
+    },
+    {
+      video: {
+        deviceId: { ideal: deviceId },
+      },
+      audio: false,
+    },
   ];
 
   let lastError = null;
@@ -259,6 +271,26 @@ async function requestCameraStreamByDeviceId(deviceId) {
   }
 
   throw lastError || new Error("Camera device unavailable");
+}
+
+async function requestCameraStreamByPreference(preference) {
+  if (preference?.deviceId) {
+    try {
+      return await requestCameraStreamByDeviceId(preference.deviceId);
+    } catch (error) {
+      if (error?.name === "NotAllowedError" || error?.name === "SecurityError") {
+        throw error;
+      }
+      console.warn("Saved deviceId unavailable; trying saved camera metadata", error);
+    }
+  }
+
+  const matchedDevice = await findPreferredCameraDevice(preference);
+  if (matchedDevice?.deviceId) {
+    return requestCameraStreamByDeviceId(matchedDevice.deviceId);
+  }
+
+  throw new Error("Saved camera preference could not be matched");
 }
 
 async function maybeSwitchToBetterRearCamera(initialStream) {
@@ -313,7 +345,7 @@ async function maybeSwitchToBetterRearCamera(initialStream) {
   }
 }
 
-async function activateCameraStream(nextStream, { saveDevice = false } = {}) {
+async function activateCameraStream(nextStream, { saveDevice = false, preferredDevice = null } = {}) {
   await optimizeCameraTrack(nextStream);
   video.srcObject = nextStream;
   await video.play().catch(() => {});
@@ -321,8 +353,9 @@ async function activateCameraStream(nextStream, { saveDevice = false } = {}) {
   const [track] = nextStream.getVideoTracks();
   activeCameraDeviceId = track?.getSettings?.().deviceId || "";
   await refreshCameraDevices();
-  if (saveDevice && activeCameraDeviceId) {
-    saveCameraDeviceId(activeCameraDeviceId);
+  activeCameraPreference = buildCameraPreference(track, preferredDevice || findCameraDeviceById(activeCameraDeviceId));
+  if (saveDevice && activeCameraPreference?.deviceId) {
+    saveCameraPreference(activeCameraPreference);
   }
   updateSwitchCameraVisibility();
   logCameraInfo("LIFF camera ready", track);
@@ -382,11 +415,9 @@ async function switchCamera() {
 
   try {
     await refreshCameraDevices();
-    const currentIndex = Math.max(
-      availableCameraDevices.findIndex((device) => device.deviceId === activeCameraDeviceId),
-      0,
-    );
+    const currentIndex = getActiveCameraIndex();
     let replacementStream = null;
+    let selectedDevice = null;
 
     for (let offset = 1; offset <= availableCameraDevices.length; offset += 1) {
       const candidate = availableCameraDevices[(currentIndex + offset) % availableCameraDevices.length];
@@ -396,6 +427,7 @@ async function switchCamera() {
 
       try {
         replacementStream = await requestCameraStreamByDeviceId(candidate.deviceId);
+        selectedDevice = candidate;
         break;
       } catch (error) {
         console.warn("Camera switch candidate failed", candidate.label || candidate.deviceId, error);
@@ -408,7 +440,8 @@ async function switchCamera() {
 
     stopCameraStream();
     stream = replacementStream;
-    await activateCameraStream(stream, { saveDevice: true });
+    activeCameraPreference = buildCameraPreference(stream.getVideoTracks()[0], selectedDevice);
+    await activateCameraStream(stream, { saveDevice: true, preferredDevice: selectedDevice });
   } catch (error) {
     console.error(error);
     setStatusKey("status_camera_denied");
@@ -417,6 +450,20 @@ async function switchCamera() {
     isSwitchingCamera = false;
     updateSwitchCameraVisibility();
   }
+}
+
+function getActiveCameraIndex() {
+  const byDeviceId = availableCameraDevices.findIndex((device) => device.deviceId === activeCameraDeviceId);
+  if (byDeviceId >= 0) {
+    return byDeviceId;
+  }
+
+  const byPreference = findCameraIndexByPreference(activeCameraPreference);
+  if (byPreference >= 0) {
+    return byPreference;
+  }
+
+  return 0;
 }
 
 function scoreCameraLabel(label = "") {
@@ -450,18 +497,129 @@ function getSavedCameraDeviceId() {
   }
 }
 
-function saveCameraDeviceId(deviceId) {
+function getSavedCameraPreference() {
   try {
-    window.localStorage?.setItem(CAMERA_DEVICE_STORAGE_KEY, deviceId);
+    const rawPreference = window.localStorage?.getItem(CAMERA_PREFERENCE_STORAGE_KEY);
+    if (rawPreference) {
+      const parsed = JSON.parse(rawPreference);
+      if (parsed && typeof parsed === "object") {
+        return parsed;
+      }
+    }
+  } catch (error) {
+    console.warn("Could not read saved camera preference", error);
+  }
+
+  return null;
+}
+
+function saveCameraPreference(preference) {
+  if (!preference?.deviceId) {
+    return;
+  }
+
+  try {
+    window.localStorage?.setItem(CAMERA_PREFERENCE_STORAGE_KEY, JSON.stringify(preference));
+    window.localStorage?.setItem(CAMERA_DEVICE_STORAGE_KEY, preference.deviceId);
   } catch (error) {
     console.warn("Could not save camera device preference", error);
   }
 }
 
-function clearSavedCameraDeviceId() {
+function clearSavedCameraPreference() {
   try {
+    window.localStorage?.removeItem(CAMERA_PREFERENCE_STORAGE_KEY);
     window.localStorage?.removeItem(CAMERA_DEVICE_STORAGE_KEY);
   } catch (error) {}
+}
+
+function buildCameraPreference(track, device = null) {
+  const settings = track?.getSettings?.() || {};
+  const label = track?.label || device?.label || "";
+  const deviceId = settings.deviceId || device?.deviceId || "";
+  return {
+    deviceId,
+    groupId: device?.groupId || "",
+    label,
+    labelKey: normalizeCameraLabel(label),
+    index: availableCameraDevices.findIndex((item) => item.deviceId === deviceId),
+    width: settings.width || 0,
+    height: settings.height || 0,
+    zoom: settings.zoom ?? null,
+    savedAt: Date.now(),
+  };
+}
+
+function normalizeCameraLabel(label = "") {
+  return String(label)
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, "")
+    .replace(/[^a-z0-9ก-๙]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function findCameraDeviceById(deviceId) {
+  if (!deviceId) {
+    return null;
+  }
+  return availableCameraDevices.find((device) => device.deviceId === deviceId) || null;
+}
+
+async function findPreferredCameraDevice(preference) {
+  if (!navigator.mediaDevices?.enumerateDevices || !preference) {
+    return null;
+  }
+
+  await refreshCameraDevices();
+  const matchIndex = findCameraIndexByPreference(preference);
+  return matchIndex >= 0 ? availableCameraDevices[matchIndex] : null;
+}
+
+function findCameraIndexByPreference(preference) {
+  if (!preference || !availableCameraDevices.length) {
+    return -1;
+  }
+
+  if (preference.deviceId) {
+    const byDeviceId = availableCameraDevices.findIndex((device) => device.deviceId === preference.deviceId);
+    if (byDeviceId >= 0) {
+      return byDeviceId;
+    }
+  }
+
+  const preferredLabel = normalizeCameraLabel(preference.label || preference.labelKey || "");
+  if (preference.groupId && preferredLabel) {
+    const byGroupAndLabel = availableCameraDevices.findIndex((device) => (
+      device.groupId === preference.groupId &&
+      normalizeCameraLabel(device.label) === preferredLabel
+    ));
+    if (byGroupAndLabel >= 0) {
+      return byGroupAndLabel;
+    }
+  }
+
+  if (preferredLabel) {
+    const byExactLabel = availableCameraDevices.findIndex((device) => normalizeCameraLabel(device.label) === preferredLabel);
+    if (byExactLabel >= 0) {
+      return byExactLabel;
+    }
+
+    const bySimilarLabel = availableCameraDevices.findIndex((device) => {
+      const label = normalizeCameraLabel(device.label);
+      return label && (label.includes(preferredLabel) || preferredLabel.includes(label));
+    });
+    if (bySimilarLabel >= 0) {
+      return bySimilarLabel;
+    }
+  }
+
+  const savedIndex = Number(preference.index);
+  if (Number.isInteger(savedIndex) && availableCameraDevices[savedIndex]) {
+    return savedIndex;
+  }
+
+  return -1;
 }
 
 async function optimizeCameraTrack(mediaStream) {
