@@ -95,6 +95,11 @@ class LiffCameraTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("CAMERA_IDEAL_WIDTH", script)
         self.assertIn("requestCameraStreamWithFallbacks", script)
         self.assertIn("maybeSwitchToBetterRearCamera", script)
+        self.assertIn("switchCamera", script)
+        self.assertIn("CAMERA_DEVICE_STORAGE_KEY", script)
+        self.assertIn("getSavedCameraDeviceId", script)
+        self.assertIn("saveCameraDeviceId", script)
+        self.assertIn("getCameraSwitchCandidates", script)
         self.assertIn("scoreCameraLabel", script)
         self.assertIn("optimizeCameraTrack", script)
         self.assertIn("normalizeCameraFocus", script)
@@ -140,6 +145,8 @@ class LiffCameraTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(".preview-instruction", css_response.text)
         self.assertIn(".camera-shell.preview-mode .preview-panel", css_response.text)
         self.assertIn(".camera-shell.preview-mode .controls", css_response.text)
+        self.assertIn('id="switchCameraButton"', html_response.text)
+        self.assertIn(".camera-switch-button", css_response.text)
         self.assertIn("setProcessingMode", script_response.text)
         self.assertIn("loadLiffMessages", script_response.text)
         self.assertIn("applyTranslations", script_response.text)
@@ -202,6 +209,7 @@ class LiffCameraTests(unittest.IsolatedAsyncioTestCase):
         body = response.json()
         self.assertEqual(body["language"], "zh")
         self.assertEqual(body["messages"]["capture_button"], "拍照")
+        self.assertEqual(body["messages"]["switch_camera_button"], "切换相机")
         self.assertIn("status_upload_success", body["messages"])
 
     async def test_liff_messages_falls_back_to_thai_without_line_user_id(self):

@@ -168,6 +168,27 @@ button {
   transition: transform 160ms ease;
 }
 
+.camera-switch-button {
+  justify-self: center;
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: rgba(8, 13, 18, 0.72);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 700;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+}
+
+.camera-switch-button[hidden] {
+  display: none !important;
+}
+
+.camera-switch-button:disabled {
+  opacity: 0.55;
+}
+
 .primary-button,
 .secondary-button {
   min-height: 52px;
@@ -284,6 +305,10 @@ button {
 
 .camera-shell.preview-mode .controls {
   transform: translateY(clamp(42px, 6svh, 78px));
+}
+
+.camera-shell.preview-mode .camera-switch-button {
+  display: none !important;
 }
 
 .preview-instruction {

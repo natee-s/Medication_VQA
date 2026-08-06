@@ -5,10 +5,12 @@ const PDPA_MASK_RATIO = 0.25;
 const CAMERA_IDEAL_WIDTH = 1920;
 const CAMERA_IDEAL_HEIGHT = 1440;
 const CAMERA_IDEAL_ASPECT_RATIO = 4 / 3;
+const CAMERA_DEVICE_STORAGE_KEY = "medication_label_camera_device_id";
 
 const video = document.getElementById("cameraPreview");
 const canvas = document.getElementById("captureCanvas");
 const guideFrame = document.getElementById("guideFrame");
+const switchCameraButton = document.getElementById("switchCameraButton");
 const captureButton = document.getElementById("captureButton");
 const retakeButton = document.getElementById("retakeButton");
 const uploadButton = document.getElementById("uploadButton");
@@ -28,11 +30,13 @@ const FALLBACK_MESSAGES = {
   subtitle: "วางฉลากให้อยู่ในกรอบ และให้เส้นคั่นบนฉลากตรงกับเส้นกลางกรอบ",
   preview_instruction: "ตรวจรูปก่อนส่ง ถ้าไม่ชัดให้กดถ่ายใหม่",
   preview_alt: "รูปฉลากยาที่ถ่ายแล้ว",
+  switch_camera_button: "สลับกล้อง",
   capture_button: "ถ่ายรูป",
   retake_button: "ถ่ายใหม่",
   upload_button: "ส่งรูป",
   status_camera_unsupported: "อุปกรณ์นี้ไม่รองรับการเปิดกล้องผ่านเว็บ",
   status_align_label: "จัดฉลากให้อยู่ในกรอบ แล้วกดถ่ายรูป",
+  status_switching_camera: "กำลังสลับกล้อง...",
   status_camera_denied: "เปิดกล้องไม่ได้ กรุณาอนุญาตสิทธิ์กล้องแล้วลองใหม่",
   status_camera_not_ready: "กล้องยังไม่พร้อม กรุณารอสักครู่",
   status_create_failed: "สร้างรูปไม่สำเร็จ กรุณาถ่ายใหม่",
@@ -46,6 +50,9 @@ let capturedBlob = null;
 let stream = null;
 let lineUserId = "";
 let isCapturing = false;
+let isSwitchingCamera = false;
+let availableCameraDevices = [];
+let activeCameraDeviceId = "";
 let uiMessages = { ...FALLBACK_MESSAGES };
 let currentStatusKey = "";
 const cameraDebugMode = new URLSearchParams(window.location.search).has("debug");
@@ -104,6 +111,7 @@ async function loadLiffMessages() {
 function setPreviewMode(enabled) {
   cameraShell.classList.toggle("preview-mode", enabled);
   previewPanel.hidden = !enabled;
+  updateSwitchCameraVisibility();
   captureButton.hidden = enabled;
   retakeButton.hidden = !enabled;
   uploadButton.hidden = !enabled;
@@ -137,19 +145,7 @@ async function startCamera() {
 
   try {
     stream = await requestRearCameraStream();
-    await optimizeCameraTrack(stream);
-    video.srcObject = stream;
-    await video.play().catch(() => {});
-
-    const [track] = stream.getVideoTracks();
-    logCameraInfo("LIFF camera ready", track);
-
-    captureButton.disabled = false;
-    if (cameraDebugMode) {
-      setStatus(formatCameraDebugInfo(track));
-    } else {
-      setStatusKey("status_align_label");
-    }
+    await activateCameraStream(stream, { saveDevice: false });
   } catch (error) {
     console.error(error);
     stopCameraStream();
@@ -159,9 +155,33 @@ async function startCamera() {
 }
 
 async function requestRearCameraStream() {
+  const savedStream = await requestSavedCameraStream();
+  if (savedStream) {
+    return savedStream;
+  }
+
   const initialStream = await requestCameraStreamWithFallbacks();
   const selectedStream = await maybeSwitchToBetterRearCamera(initialStream);
   return selectedStream;
+}
+
+async function requestSavedCameraStream() {
+  const savedDeviceId = getSavedCameraDeviceId();
+  if (!savedDeviceId) {
+    return null;
+  }
+
+  try {
+    return await requestCameraStreamByDeviceId(savedDeviceId);
+  } catch (error) {
+    if (error?.name === "NotAllowedError" || error?.name === "SecurityError") {
+      throw error;
+    }
+
+    clearSavedCameraDeviceId();
+    console.warn("Saved camera unavailable; falling back to automatic selection", error);
+    return null;
+  }
 }
 
 function preferredVideoConstraints(extra = {}) {
@@ -210,6 +230,37 @@ async function requestCameraStreamWithFallbacks() {
   throw lastError || new Error("Camera stream unavailable");
 }
 
+async function requestCameraStreamByDeviceId(deviceId) {
+  const attempts = [
+    {
+      video: preferredVideoConstraints({
+        deviceId: { exact: deviceId },
+      }),
+      audio: false,
+    },
+    {
+      video: {
+        deviceId: { exact: deviceId },
+      },
+      audio: false,
+    },
+  ];
+
+  let lastError = null;
+  for (const constraints of attempts) {
+    try {
+      return await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (error) {
+      lastError = error;
+      if (error?.name === "NotAllowedError" || error?.name === "SecurityError") {
+        throw error;
+      }
+    }
+  }
+
+  throw lastError || new Error("Camera device unavailable");
+}
+
 async function maybeSwitchToBetterRearCamera(initialStream) {
   if (!navigator.mediaDevices?.enumerateDevices) {
     return initialStream;
@@ -218,6 +269,7 @@ async function maybeSwitchToBetterRearCamera(initialStream) {
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
     const videoInputs = devices.filter((device) => device.kind === "videoinput" && device.deviceId);
+    availableCameraDevices = getCameraSwitchCandidates(videoInputs);
     if (cameraDebugMode) {
       console.info("LIFF available video inputs", videoInputs.map((device) => ({
         label: device.label || "unknown",
@@ -261,6 +313,112 @@ async function maybeSwitchToBetterRearCamera(initialStream) {
   }
 }
 
+async function activateCameraStream(nextStream, { saveDevice = false } = {}) {
+  await optimizeCameraTrack(nextStream);
+  video.srcObject = nextStream;
+  await video.play().catch(() => {});
+
+  const [track] = nextStream.getVideoTracks();
+  activeCameraDeviceId = track?.getSettings?.().deviceId || "";
+  await refreshCameraDevices();
+  if (saveDevice && activeCameraDeviceId) {
+    saveCameraDeviceId(activeCameraDeviceId);
+  }
+  updateSwitchCameraVisibility();
+  logCameraInfo("LIFF camera ready", track);
+
+  captureButton.disabled = false;
+  if (cameraDebugMode) {
+    setStatus(formatCameraDebugInfo(track));
+  } else {
+    setStatusKey("status_align_label");
+  }
+}
+
+async function refreshCameraDevices() {
+  if (!navigator.mediaDevices?.enumerateDevices) {
+    availableCameraDevices = [];
+    return;
+  }
+
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const videoInputs = devices.filter((device) => device.kind === "videoinput" && device.deviceId);
+    availableCameraDevices = getCameraSwitchCandidates(videoInputs);
+  } catch (error) {
+    console.warn("Could not refresh camera list", error);
+    availableCameraDevices = [];
+  }
+}
+
+function getCameraSwitchCandidates(videoInputs) {
+  return videoInputs.filter((device) => {
+    if (!device.deviceId) {
+      return false;
+    }
+    return !isFrontCameraLabel(device.label);
+  });
+}
+
+function updateSwitchCameraVisibility() {
+  if (!switchCameraButton) {
+    return;
+  }
+
+  const hasAlternatives = availableCameraDevices.length > 1;
+  switchCameraButton.hidden = !hasAlternatives || !previewPanel.hidden;
+  switchCameraButton.disabled = isSwitchingCamera || isCapturing;
+}
+
+async function switchCamera() {
+  if (isSwitchingCamera || availableCameraDevices.length < 2) {
+    return;
+  }
+
+  isSwitchingCamera = true;
+  updateSwitchCameraVisibility();
+  captureButton.disabled = true;
+  setStatusKey("status_switching_camera");
+
+  try {
+    await refreshCameraDevices();
+    const currentIndex = Math.max(
+      availableCameraDevices.findIndex((device) => device.deviceId === activeCameraDeviceId),
+      0,
+    );
+    let replacementStream = null;
+
+    for (let offset = 1; offset <= availableCameraDevices.length; offset += 1) {
+      const candidate = availableCameraDevices[(currentIndex + offset) % availableCameraDevices.length];
+      if (!candidate?.deviceId || candidate.deviceId === activeCameraDeviceId) {
+        continue;
+      }
+
+      try {
+        replacementStream = await requestCameraStreamByDeviceId(candidate.deviceId);
+        break;
+      } catch (error) {
+        console.warn("Camera switch candidate failed", candidate.label || candidate.deviceId, error);
+      }
+    }
+
+    if (!replacementStream) {
+      throw new Error("No switchable camera could be opened");
+    }
+
+    stopCameraStream();
+    stream = replacementStream;
+    await activateCameraStream(stream, { saveDevice: true });
+  } catch (error) {
+    console.error(error);
+    setStatusKey("status_camera_denied");
+    captureButton.disabled = false;
+  } finally {
+    isSwitchingCamera = false;
+    updateSwitchCameraVisibility();
+  }
+}
+
 function scoreCameraLabel(label = "") {
   const normalized = label.toLowerCase();
   let score = 0;
@@ -274,9 +432,36 @@ function scoreCameraLabel(label = "") {
   return score;
 }
 
+function isFrontCameraLabel(label = "") {
+  const normalized = label.toLowerCase();
+  return /(front|user|หน้า|selfie)/.test(normalized);
+}
+
 function isBadRearCameraLabel(label = "") {
   const normalized = label.toLowerCase();
   return /(front|user|หน้า|selfie|tele|telephoto|zoom|portrait|depth|macro)/.test(normalized);
+}
+
+function getSavedCameraDeviceId() {
+  try {
+    return window.localStorage?.getItem(CAMERA_DEVICE_STORAGE_KEY) || "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function saveCameraDeviceId(deviceId) {
+  try {
+    window.localStorage?.setItem(CAMERA_DEVICE_STORAGE_KEY, deviceId);
+  } catch (error) {
+    console.warn("Could not save camera device preference", error);
+  }
+}
+
+function clearSavedCameraDeviceId() {
+  try {
+    window.localStorage?.removeItem(CAMERA_DEVICE_STORAGE_KEY);
+  } catch (error) {}
 }
 
 async function optimizeCameraTrack(mediaStream) {
@@ -477,6 +662,7 @@ async function captureGuideFrame() {
 
   isCapturing = true;
   captureButton.disabled = true;
+  updateSwitchCameraVisibility();
   setStatus("");
   setProcessingMode(true);
 
@@ -500,6 +686,7 @@ async function captureGuideFrame() {
 
   isCapturing = false;
   captureButton.disabled = false;
+  updateSwitchCameraVisibility();
   setProcessingMode(false);
 
   if (!previewBlob || !maskedBlob) {
@@ -524,6 +711,7 @@ function retake() {
   retakeButton.disabled = false;
   uploadButton.disabled = false;
   captureButton.disabled = false;
+  updateSwitchCameraVisibility();
   setPreviewMode(false);
   setStatusKey("status_align_label");
 }
@@ -572,6 +760,7 @@ async function uploadCapture() {
 }
 
 captureButton.addEventListener("click", captureGuideFrame);
+switchCameraButton?.addEventListener("click", switchCamera);
 retakeButton.addEventListener("click", retake);
 uploadButton.addEventListener("click", uploadCapture);
 

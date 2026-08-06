@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Medication Label Camera</title>
-    <link rel="stylesheet" href="/static/liff-camera/style.css?v=camera-lens-20260805" />
+    <link rel="stylesheet" href="/static/liff-camera/style.css?v=camera-lens-switch-20260806" />
   </head>
   <body>
     <main class="camera-shell">
@@ -42,6 +42,7 @@
       </section>
 
       <section class="controls">
+        <button id="switchCameraButton" class="camera-switch-button" type="button" hidden data-i18n="switch_camera_button">สลับกล้อง</button>
         <button id="captureButton" class="primary-button" type="button" data-i18n="capture_button">ถ่ายรูป</button>
         <button id="retakeButton" class="secondary-button" type="button" hidden data-i18n="retake_button">ถ่ายใหม่</button>
         <button id="uploadButton" class="primary-button" type="button" hidden data-i18n="upload_button">ส่งรูป</button>
@@ -50,6 +51,6 @@
     </main>
 
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-    <script src="/static/liff-camera/app.js?v=camera-lens-20260805"></script>
+    <script src="/static/liff-camera/app.js?v=camera-lens-switch-20260806"></script>
   </body>
 </html>
