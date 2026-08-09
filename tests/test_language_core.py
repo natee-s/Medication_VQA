@@ -440,8 +440,30 @@ class MainMedicineFollowupTests(unittest.TestCase):
 
         self.assertTrue(main.is_followup_medicine_question("กินกับ ibuprofen ได้ไหม"))
         self.assertTrue(main.is_followup_medicine_question("ยานี้กินพร้อมกับนมได้ไหม"))
+        self.assertTrue(main.is_followup_medicine_question("กินติดต่อกันได้นานแค่ไหน"))
         self.assertTrue(main.is_followup_medicine_question("Can I take it with paracetamol?"))
         self.assertFalse(main.is_followup_medicine_question("ปวดหัว"))
+
+    def test_followup_prompt_keeps_context_and_correct_pharmacy_name(self):
+        import main
+
+        prompt = main.build_followup_answer_prompt(
+            {
+                "trade_name": "LEFTOSE 30MG.10 S.",
+                "generic_name": "LYSOZYME CHLORIDE 30 mg",
+                "indication": "ลดอักเสบ ลดบวม",
+                "dosage": "ทานครั้งละ 1-2 เม็ด วันละ 3 ครั้ง",
+                "instruction": "หลังอาหาร เช้า-กลางวัน-เย็น",
+                "warning": "ไม่มี",
+            },
+            "กินติดต่อกันได้นานแค่ไหน",
+            "th",
+        )
+
+        self.assertIn("ร้านขายยาบ้านยาสุขใจ", prompt)
+        self.assertIn("Never use \"บันยะสุขใจ\"", prompt)
+        self.assertIn("Answer only about the primary drug", prompt)
+        self.assertIn("Do not guess a number of days", prompt)
 
     def test_followup_flex_uses_status_color_and_selected_language(self):
         import main

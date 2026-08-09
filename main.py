@@ -2380,6 +2380,24 @@ def is_followup_medicine_question(text: str) -> bool:
         "alcohol",
         "milk",
         "coffee",
+        "กินติดต่อ",
+        "ทานติดต่อ",
+        "นานแค่ไหน",
+        "กินได้นาน",
+        "ทานได้นาน",
+        "กินได้กี่วัน",
+        "ทานได้กี่วัน",
+        "กี่วัน",
+        "ต่อเนื่อง",
+        "หยุดเมื่อไหร่",
+        "หยุดตอนไหน",
+        "กินจนหมด",
+        "ทานจนหมด",
+        "howlong",
+        "how many days",
+        "duration",
+        "continue",
+        "for how long",
         "pregnant",
         "breastfeeding",
         "interaction",
@@ -2413,7 +2431,7 @@ def build_followup_answer_prompt(context: dict, user_query: str, lang: str) -> s
         "raw_context": context.get("raw_context_json") or {},
     }
     return f"""
-You are GinyaKan, a warm and careful AI pharmacist assistant for Banya Sookjai pharmacy.
+You are GinyaKan, a warm and careful AI pharmacist assistant for ร้านขายยาบ้านยาสุขใจ.
 Answer the user's follow-up question about the medicine context below.
 
 Medicine context:
@@ -2424,10 +2442,13 @@ User question:
 
 Rules:
 - {build_language_instruction(lang)}
+- Answer only about the primary drug in Medicine context. Do not switch to unrelated symptoms or other medicines unless the user clearly asks about them.
 - Medical safety first. If the answer is uncertain or high risk, recommend consulting a doctor or pharmacist.
 - For drug interaction questions, classify as safe, warning, or danger.
+- For duration questions such as how many days or how long to take it, use only the label/database context. If duration is not stated, say it is not specified and recommend asking a pharmacist or doctor. Do not guess a number of days.
 - If the other drug, food, condition, or dose is unclear, use status "warning" and ask for clarification.
 - Do not invent facts beyond general medication safety knowledge and the provided medicine context.
+- If mentioning the pharmacy name in Thai, use exactly "ร้านขายยาบ้านยาสุขใจ". Never use "บันยะสุขใจ".
 - Keep the answer concise for LINE mobile reading.
 - Return JSON only. Do not include markdown or extra text.
 
