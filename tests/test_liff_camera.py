@@ -130,6 +130,9 @@ class LiffCameraTests(unittest.IsolatedAsyncioTestCase):
         self.assertLess(script.index("applyGuidelinePdpaMask(context);"), script.index("const maskedBlob = await canvasToJpegBlob();"))
         self.assertIn("capturedBlob = maskedBlob;", script)
         self.assertIn("capturedPreview.src = URL.createObjectURL(previewBlob);", script)
+        self.assertIn("stopCameraStream();", script)
+        self.assertIn("async function retake()", script)
+        self.assertIn("await startCamera();", script)
         self.assertIn("body: capturedBlob", script)
 
     async def test_liff_camera_page_has_processing_overlay_and_preview_instruction(self):

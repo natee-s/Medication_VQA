@@ -844,6 +844,7 @@ async function captureGuideFrame() {
       OUTPUT_WIDTH,
       OUTPUT_HEIGHT,
     );
+    stopCameraStream();
     setCaptureProcessingMode(true);
 
     const previewBlob = await canvasToJpegBlob();
@@ -869,6 +870,7 @@ async function captureGuideFrame() {
     setStatus("");
   } catch (error) {
     console.warn("Capture failed", error);
+    stopCameraStream();
     capturedBlob = null;
     if (capturedPreview.src) {
       URL.revokeObjectURL(capturedPreview.src);
@@ -876,6 +878,7 @@ async function captureGuideFrame() {
     capturedPreview.removeAttribute("src");
     setPreviewMode(false);
     setStatusKey("status_create_failed");
+    await startCamera();
   } finally {
     isCapturing = false;
     captureButton.disabled = false;
@@ -885,21 +888,23 @@ async function captureGuideFrame() {
   }
 }
 
-function retake() {
+async function retake() {
   capturedBlob = null;
   isCapturing = false;
   setProcessingMode(false);
   setCaptureProcessingMode(false);
+  stopCameraStream();
   if (capturedPreview.src) {
     URL.revokeObjectURL(capturedPreview.src);
   }
   capturedPreview.removeAttribute("src");
-  retakeButton.disabled = false;
-  uploadButton.disabled = false;
-  captureButton.disabled = false;
+  retakeButton.disabled = true;
+  uploadButton.disabled = true;
+  captureButton.disabled = true;
   updateSwitchCameraVisibility();
   setPreviewMode(false);
   setStatusKey("status_align_label");
+  await startCamera();
 }
 
 async function uploadCapture() {
