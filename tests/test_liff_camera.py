@@ -231,7 +231,7 @@ class LiffCameraTests(unittest.IsolatedAsyncioTestCase):
         body = response.json()
         self.assertEqual(body["language"], "th")
         self.assertEqual(body["messages"]["capture_button"], "ถ่ายรูป")
-        self.assertEqual(body["messages"]["processing_captured"], "ถ่ายรูปเรียบร้อยแล้ว กำลังประมวลผล...")
+        self.assertEqual(body["messages"]["processing_captured"], "ถ่ายรูปเสร็จแล้ว กำลังประมวลผล...")
 
     async def test_liff_upload_label_records_line_user_id_metadata(self):
         import main

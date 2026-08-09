@@ -25,7 +25,7 @@ const cameraShell = document.querySelector(".camera-shell");
 const FALLBACK_MESSAGES = {
   document_title: "Medication Label Camera",
   processing: "กำลังประมวลผล...",
-  processing_captured: "ถ่ายรูปเรียบร้อยแล้ว กำลังประมวลผล...",
+  processing_captured: "ถ่ายรูปเสร็จแล้ว กำลังประมวลผล...",
   guide_header: "ส่วนหัวฉลาก",
   guide_body: "ชื่อยาและวิธีใช้",
   title: "ถ่ายฉลากยา",
@@ -820,43 +820,65 @@ async function captureGuideFrame() {
   }
 
   isCapturing = true;
+  capturedBlob = null;
   captureButton.disabled = true;
   updateSwitchCameraVisibility();
   setStatus("");
   setProcessingMode(true, t("processing_captured"));
 
-  const source = getGuideSourceRect();
-  const context = canvas.getContext("2d", { alpha: false });
-  context.drawImage(
-    video,
-    source.x,
-    source.y,
-    source.width,
-    source.height,
-    0,
-    0,
-    OUTPUT_WIDTH,
-    OUTPUT_HEIGHT,
-  );
+  try {
+    const source = getGuideSourceRect();
+    const context = canvas.getContext("2d", { alpha: false });
+    context.drawImage(
+      video,
+      source.x,
+      source.y,
+      source.width,
+      source.height,
+      0,
+      0,
+      OUTPUT_WIDTH,
+      OUTPUT_HEIGHT,
+    );
 
-  const previewBlob = await canvasToJpegBlob();
-  applyGuidelinePdpaMask(context);
-  const maskedBlob = await canvasToJpegBlob();
+    const previewBlob = await canvasToJpegBlob();
+    if (!previewBlob) {
+      throw new Error("Could not create preview image");
+    }
 
-  isCapturing = false;
-  captureButton.disabled = false;
-  updateSwitchCameraVisibility();
-  setProcessingMode(false);
+    if (capturedPreview.src) {
+      URL.revokeObjectURL(capturedPreview.src);
+    }
+    capturedPreview.src = URL.createObjectURL(previewBlob);
+    setPreviewMode(true);
+    retakeButton.disabled = true;
+    uploadButton.disabled = true;
 
-  if (!previewBlob || !maskedBlob) {
+    applyGuidelinePdpaMask(context);
+    const maskedBlob = await canvasToJpegBlob();
+    if (!maskedBlob) {
+      throw new Error("Could not create masked image");
+    }
+
+    capturedBlob = maskedBlob;
+    retakeButton.disabled = false;
+    uploadButton.disabled = false;
+    setStatus("");
+  } catch (error) {
+    console.warn("Capture failed", error);
+    capturedBlob = null;
+    if (capturedPreview.src) {
+      URL.revokeObjectURL(capturedPreview.src);
+    }
+    capturedPreview.removeAttribute("src");
+    setPreviewMode(false);
     setStatusKey("status_create_failed");
-    return;
+  } finally {
+    isCapturing = false;
+    captureButton.disabled = false;
+    updateSwitchCameraVisibility();
+    setProcessingMode(false);
   }
-
-  capturedBlob = maskedBlob;
-  capturedPreview.src = URL.createObjectURL(previewBlob);
-  setPreviewMode(true);
-  setStatus("");
 }
 
 function retake() {

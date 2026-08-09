@@ -1633,7 +1633,7 @@ LIFF_CAMERA_MESSAGES = {
     "th": {
         "document_title": "Medication Label Camera",
         "processing": "กำลังประมวลผล...",
-        "processing_captured": "ถ่ายรูปเรียบร้อยแล้ว กำลังประมวลผล...",
+        "processing_captured": "ถ่ายรูปเสร็จแล้ว กำลังประมวลผล...",
         "guide_header": "ส่วนหัวฉลาก",
         "guide_body": "ชื่อยาและวิธีใช้",
         "title": "ถ่ายฉลากยา",
