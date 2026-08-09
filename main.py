@@ -2135,19 +2135,39 @@ def get_medicine_display_name(medicine_data: dict, lang: str) -> str:
     return t(lang, "not_specified")
 
 
+LINE_POSTBACK_DATA_MAX_LENGTH = 300
+
+
+def clean_postback_text(value, max_chars: int) -> str:
+    text = re.sub(r"\s+", " ", str(value or "").strip())
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars].rstrip()
+
+
 def build_set_reminder_postback_data(display_data: dict, lang: str, time_payload: str, meal_timing: str) -> str:
-    drug_name = get_medicine_display_name(display_data, lang)
+    drug_name = clean_postback_text(get_medicine_display_name(display_data, lang), 90)
     trade_name = display_data.get("trade_name")
-    trade_name = "" if is_unspecified_medicine_name(trade_name) else str(trade_name).strip()
-    query = urlencode(
-        {
-            "drug": drug_name,
-            "trade": trade_name,
+    trade_name = "" if is_unspecified_medicine_name(trade_name) else clean_postback_text(trade_name, 60)
+
+    def build_data(drug: str, trade: str) -> str:
+        query = urlencode({
+            "drug": drug,
+            "trade": trade,
             "time": time_payload,
             "timing": meal_timing,
-        }
-    )
-    return f"action=set_reminder&{query}"
+        })
+        return f"action=set_reminder&{query}"
+
+    data = build_data(drug_name, trade_name)
+    if len(data) <= LINE_POSTBACK_DATA_MAX_LENGTH:
+        return data
+
+    data = build_data(drug_name, "")
+    while len(data) > LINE_POSTBACK_DATA_MAX_LENGTH and len(drug_name) > 20:
+        drug_name = clean_postback_text(drug_name, len(drug_name) - 10)
+        data = build_data(drug_name, "")
+    return data
 
 
 def build_medicine_label_flex_reply(lang: str, display_data: dict, time_payload: str, meal_timing: str) -> dict:

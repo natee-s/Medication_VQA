@@ -358,6 +358,30 @@ class MainMedicineLabelFlexLocalizationTests(unittest.TestCase):
         self.assertEqual(reminder_params["drug"], "PROCTASE-P CAPSULES 10 S")
         self.assertEqual(reminder_params["trade"], "PROCTASE-P CAPSULES 10 S")
 
+    def test_set_reminder_postback_data_stays_within_line_limit_for_long_trade_names(self):
+        import main
+
+        long_trade_name = (
+            "FLURIN 5 MG *นับเม็ด* เม็ดรีสีเขียวอ่อน "
+            "[โปรดระบุชื่อฉลากใหม่และรายละเอียดเพิ่มเติม]" * 3
+        )
+        data = main.build_set_reminder_postback_data(
+            {
+                "trade_name": long_trade_name,
+                "generic_name": "FLUNARIZINE",
+            },
+            "th",
+            time_payload="morning,noon,evening",
+            meal_timing="after",
+        )
+        reminder_params = dict(parse_qsl(data))
+
+        self.assertLessEqual(len(data), 300)
+        self.assertEqual(reminder_params["action"], "set_reminder")
+        self.assertEqual(reminder_params["drug"], "FLUNARIZINE")
+        self.assertEqual(reminder_params["time"], "morning,noon,evening")
+        self.assertEqual(reminder_params["timing"], "after")
+
     def test_medicine_display_name_prefers_generic_when_available(self):
         import main
 
