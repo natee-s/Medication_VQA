@@ -79,6 +79,10 @@ function setProcessingMode(enabled, message = t("processing")) {
   processingOverlay.hidden = !enabled;
 }
 
+function setCaptureProcessingMode(enabled) {
+  cameraShell.classList.toggle("capture-processing-mode", enabled);
+}
+
 function applyTranslations(messages, language = "th") {
   uiMessages = { ...FALLBACK_MESSAGES, ...(messages || {}) };
   document.documentElement.lang = language;
@@ -840,6 +844,7 @@ async function captureGuideFrame() {
       OUTPUT_WIDTH,
       OUTPUT_HEIGHT,
     );
+    setCaptureProcessingMode(true);
 
     const previewBlob = await canvasToJpegBlob();
     if (!previewBlob) {
@@ -850,9 +855,6 @@ async function captureGuideFrame() {
       URL.revokeObjectURL(capturedPreview.src);
     }
     capturedPreview.src = URL.createObjectURL(previewBlob);
-    setPreviewMode(true);
-    retakeButton.disabled = true;
-    uploadButton.disabled = true;
 
     applyGuidelinePdpaMask(context);
     const maskedBlob = await canvasToJpegBlob();
@@ -861,6 +863,7 @@ async function captureGuideFrame() {
     }
 
     capturedBlob = maskedBlob;
+    setPreviewMode(true);
     retakeButton.disabled = false;
     uploadButton.disabled = false;
     setStatus("");
@@ -876,6 +879,7 @@ async function captureGuideFrame() {
   } finally {
     isCapturing = false;
     captureButton.disabled = false;
+    setCaptureProcessingMode(false);
     updateSwitchCameraVisibility();
     setProcessingMode(false);
   }
@@ -885,6 +889,7 @@ function retake() {
   capturedBlob = null;
   isCapturing = false;
   setProcessingMode(false);
+  setCaptureProcessingMode(false);
   if (capturedPreview.src) {
     URL.revokeObjectURL(capturedPreview.src);
   }

@@ -54,6 +54,15 @@ button {
   background: #111820;
 }
 
+.camera-shell.capture-processing-mode .camera-preview,
+.camera-shell.capture-processing-mode .shade,
+.camera-shell.capture-processing-mode .guide-panel,
+.camera-shell.capture-processing-mode .top-bar,
+.camera-shell.capture-processing-mode .controls,
+.camera-shell.capture-processing-mode .preview-panel {
+  visibility: hidden;
+}
+
 .top-bar {
   grid-row: 1;
   position: relative;
@@ -228,6 +237,10 @@ button {
   place-items: center;
   background: rgba(0, 0, 0, 0.42);
   padding: 20px;
+}
+
+.camera-shell.capture-processing-mode .processing-overlay {
+  background: #050708;
 }
 
 .processing-overlay[hidden] {
