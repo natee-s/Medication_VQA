@@ -434,6 +434,63 @@ class MainMedicineLabelFlexLocalizationTests(unittest.TestCase):
         self.assertEqual(display["warning"], "请勿超过推荐剂量")
 
 
+class MainMedicineFollowupTests(unittest.TestCase):
+    def test_followup_question_detection_catches_interaction_question(self):
+        import main
+
+        self.assertTrue(main.is_followup_medicine_question("กินกับ ibuprofen ได้ไหม"))
+        self.assertTrue(main.is_followup_medicine_question("ยานี้กินพร้อมกับนมได้ไหม"))
+        self.assertTrue(main.is_followup_medicine_question("Can I take it with paracetamol?"))
+        self.assertFalse(main.is_followup_medicine_question("ปวดหัว"))
+
+    def test_followup_flex_uses_status_color_and_selected_language(self):
+        import main
+
+        flex = main.build_followup_flex_reply(
+            "en",
+            {
+                "status": "warning",
+                "headline": "Take them apart",
+                "explanation": "This combination may need spacing.",
+                "recommendation_action": "Separate the doses by 2 hours and ask a pharmacist if unsure.",
+                "disclaimer": "This is preliminary guidance.",
+            },
+        )
+
+        self.assertEqual(flex["header"]["backgroundColor"], "#F9AB00")
+        self.assertEqual(flex["header"]["contents"][0]["text"], "💬 Ask About This Medicine")
+        self.assertEqual(flex["footer"]["contents"][0]["action"]["label"], "Contact pharmacist")
+
+    def test_medicine_context_payload_prefers_database_fields(self):
+        import main
+
+        context = main.build_medicine_context_payload(
+            {
+                "source_row_number": 123,
+                "trade_name": "MYOXAN",
+                "generic_name": "TOLPERISONE 50 mg",
+                "indication": "คลายกล้ามเนื้อ",
+                "dosage_frequency": "วันละ 3 ครั้ง",
+                "instruction_time": "หลังอาหาร",
+                "precaution": "อาจง่วงซึม",
+            },
+            {
+                "trade_name": "translated trade",
+                "generic_name": "translated generic",
+                "indication": "translated indication",
+                "dosage": "translated dosage",
+                "instruction": "translated instruction",
+                "warning": "translated warning",
+            },
+            "th",
+        )
+
+        self.assertEqual(context["primary_drug_id"], "123")
+        self.assertEqual(context["trade_name"], "MYOXAN")
+        self.assertEqual(context["generic_name"], "TOLPERISONE 50 mg")
+        self.assertEqual(context["raw_context_json"]["language"], "th")
+
+
 class MainReminderLocalizationTests(unittest.TestCase):
     def test_drug_list_flex_falls_back_to_trade_name_when_saved_drug_name_is_unspecified(self):
         import main

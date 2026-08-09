@@ -41,6 +41,20 @@ create table if not exists public.reminder_schedules (
     meal_timing text
 );
 
+create table if not exists public.user_medicine_context (
+    line_uid text primary key references public.user_profiles(line_uid) on delete cascade,
+    primary_drug_id text,
+    trade_name text,
+    generic_name text,
+    indication text,
+    dosage text,
+    instruction text,
+    warning text,
+    raw_context_json jsonb default '{}'::jsonb,
+    updated_at timestamptz default now(),
+    expires_at timestamptz not null
+);
+
 create index if not exists idx_medication_vqa_trade_name
     on public."Medication_VQA" using gin (trade_name gin_trgm_ops);
 
@@ -49,6 +63,9 @@ create index if not exists idx_medication_vqa_generic_name
 
 create index if not exists idx_reminder_schedules_line_uid_active
     on public.reminder_schedules (line_uid, is_active);
+
+create index if not exists idx_user_medicine_context_expires_at
+    on public.user_medicine_context (expires_at);
 
 create or replace function public.match_symptoms(
     query_embedding vector(768),

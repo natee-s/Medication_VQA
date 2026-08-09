@@ -1,4 +1,6 @@
+import json
 import os
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from services.supabase_service import SUPABASE_URL, supabase
@@ -191,6 +193,84 @@ def set_user_language(line_uid: str, language: str) -> bool:
             (normalized, line_uid),
         )
     return True
+
+
+def save_user_medicine_context(line_uid: str, context: dict, ttl_hours: int = 24) -> None:
+    if not line_uid or not context or not is_database_available():
+        return
+
+    ensure_user_profile(line_uid)
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=ttl_hours)
+    payload = {
+        "line_uid": line_uid,
+        "primary_drug_id": context.get("primary_drug_id"),
+        "trade_name": context.get("trade_name"),
+        "generic_name": context.get("generic_name"),
+        "indication": context.get("indication"),
+        "dosage": context.get("dosage"),
+        "instruction": context.get("instruction"),
+        "warning": context.get("warning"),
+        "raw_context_json": context.get("raw_context_json") or {},
+        "expires_at": expires_at.isoformat(),
+    }
+
+    if not _use_postgres():
+        supabase.table("user_medicine_context").upsert(payload, on_conflict="line_uid").execute()
+        return
+
+    _execute(
+        """
+        insert into public.user_medicine_context
+            (line_uid, primary_drug_id, trade_name, generic_name, indication, dosage, instruction, warning, raw_context_json, expires_at)
+        values
+            (%(line_uid)s, %(primary_drug_id)s, %(trade_name)s, %(generic_name)s, %(indication)s, %(dosage)s, %(instruction)s, %(warning)s, %(raw_context_json)s::jsonb, %(expires_at)s::timestamptz)
+        on conflict (line_uid) do update set
+            primary_drug_id = excluded.primary_drug_id,
+            trade_name = excluded.trade_name,
+            generic_name = excluded.generic_name,
+            indication = excluded.indication,
+            dosage = excluded.dosage,
+            instruction = excluded.instruction,
+            warning = excluded.warning,
+            raw_context_json = excluded.raw_context_json,
+            updated_at = now(),
+            expires_at = excluded.expires_at
+        """,
+        {**payload, "raw_context_json": json.dumps(payload["raw_context_json"], ensure_ascii=False)},
+    )
+
+
+def get_user_medicine_context(line_uid: str) -> dict | None:
+    if not line_uid or not is_database_available():
+        return None
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    if not _use_postgres():
+        res = (
+            supabase.table("user_medicine_context")
+            .select("*")
+            .eq("line_uid", line_uid)
+            .gt("expires_at", now_iso)
+            .execute()
+        )
+        if not res.data:
+            return None
+        return res.data[0]
+
+    row = _fetch_one(
+        """
+        select *
+        from public.user_medicine_context
+        where line_uid = %s and expires_at > now()
+        """,
+        (line_uid,),
+    )
+    if row and isinstance(row.get("raw_context_json"), str):
+        try:
+            row["raw_context_json"] = json.loads(row["raw_context_json"])
+        except json.JSONDecodeError:
+            row["raw_context_json"] = {}
+    return row
 
 
 def get_profiles_for_reminder_check(current_time_db: str, future_30_db: str, current_time_str: str) -> list[dict]:

@@ -38,10 +38,12 @@ from services.database_service import (
     get_active_reminder_schedules,
     get_profiles_for_reminder_check,
     get_user_language,
+    get_user_medicine_context,
     is_database_available,
     match_symptoms,
     SUPABASE_URL,
     normalize_language,
+    save_user_medicine_context,
     search_medication_by_generic_name,
     search_medication_rows,
     set_user_language,
@@ -2242,6 +2244,342 @@ def build_medicine_label_flex_reply(lang: str, display_data: dict, time_payload:
     }
 
 
+FOLLOWUP_FLEX_TEXTS = {
+    "th": {
+        "alt": "คำตอบเกี่ยวกับยาล่าสุด",
+        "title": "ถามต่อเกี่ยวกับยา",
+        "recommendation": "คำแนะนำ",
+        "disclaimer": "หมายเหตุ",
+    },
+    "en": {
+        "alt": "Medicine follow-up answer",
+        "title": "Ask About This Medicine",
+        "recommendation": "Recommendation",
+        "disclaimer": "Note",
+    },
+    "my": {
+        "alt": "ဆေးအကြောင်း ဆက်မေးသည့်အဖြေ",
+        "title": "ဤဆေးအကြောင်း မေးမြန်းရန်",
+        "recommendation": "အကြံပြုချက်",
+        "disclaimer": "မှတ်ချက်",
+    },
+    "lo": {
+        "alt": "ຄຳຕອບຕໍ່ເນື່ອງເກື່ອວກັບຢາ",
+        "title": "ຖາມຕໍ່ເກື່ອວກັບຢານີ້",
+        "recommendation": "ຄຳແນະນຳ",
+        "disclaimer": "ໝາຍເຫດ",
+    },
+    "zh": {
+        "alt": "药品追问回答",
+        "title": "继续询问此药",
+        "recommendation": "建议",
+        "disclaimer": "备注",
+    },
+}
+
+
+FOLLOWUP_STATUS_STYLES = {
+    "safe": {"color": "#1DB446", "icon": "✅"},
+    "warning": {"color": "#F9AB00", "icon": "⚠️"},
+    "danger": {"color": "#E03131", "icon": "🚫"},
+}
+
+
+def get_followup_text(lang: str, key: str) -> str:
+    language = normalize_language(lang)
+    return FOLLOWUP_FLEX_TEXTS.get(language, FOLLOWUP_FLEX_TEXTS[DEFAULT_LANGUAGE]).get(
+        key,
+        FOLLOWUP_FLEX_TEXTS[DEFAULT_LANGUAGE][key],
+    )
+
+
+def build_medicine_context_payload(db_data: dict, display_data: dict, lang: str) -> dict:
+    primary_drug_id = (
+        db_data.get("source_row_number")
+        or db_data.get("source_item_id")
+        or db_data.get("label_name")
+        or display_data.get("trade_name")
+        or display_data.get("generic_name")
+        or ""
+    )
+    raw_db_context = {
+        key: db_data.get(key)
+        for key in (
+            "source_row_number",
+            "source_item_id",
+            "label_name",
+            "trade_name",
+            "generic_name",
+            "indication",
+            "dosage_frequency",
+            "instruction_time",
+            "precaution",
+            "rag_text",
+        )
+    }
+    return {
+        "primary_drug_id": str(primary_drug_id),
+        "trade_name": str(db_data.get("trade_name") or display_data.get("trade_name") or "").strip(),
+        "generic_name": str(db_data.get("generic_name") or display_data.get("generic_name") or "").strip(),
+        "indication": str(db_data.get("indication") or display_data.get("indication") or "").strip(),
+        "dosage": str(db_data.get("dosage_frequency") or display_data.get("dosage") or "").strip(),
+        "instruction": str(db_data.get("instruction_time") or display_data.get("instruction") or "").strip(),
+        "warning": str(db_data.get("precaution") or display_data.get("warning") or "").strip(),
+        "raw_context_json": {
+            "language": normalize_language(lang),
+            "db_data": raw_db_context,
+            "display_data": display_data,
+        },
+    }
+
+
+def remember_user_medicine_context(user_id: str, db_data: dict, display_data: dict, lang: str) -> None:
+    try:
+        save_user_medicine_context(
+            user_id,
+            build_medicine_context_payload(db_data, display_data, lang),
+        )
+    except Exception as e:
+        print(f"⚠️ Could not save medicine follow-up context for {user_id}: {e}")
+
+
+def is_followup_medicine_question(text: str) -> bool:
+    normalized = normalize_command_text(text).lower()
+    original = (text or "").strip().lower()
+    if len(normalized) < 2:
+        return False
+
+    markers = (
+        "กินกับ",
+        "ทานกับ",
+        "กินร่วม",
+        "ทานร่วม",
+        "ร่วมกับ",
+        "พร้อมกับ",
+        "เว้น",
+        "ห่าง",
+        "กี่ชั่วโมง",
+        "ยานี้",
+        "ตัวนี้",
+        "กินได้ไหม",
+        "กินได้มั้ย",
+        "ทานได้ไหม",
+        "ทานได้มั้ย",
+        "ผลข้างเคียง",
+        "แพ้",
+        "แอลกอฮอล์",
+        "เหล้า",
+        "นม",
+        "กาแฟ",
+        "ตั้งครรภ์",
+        "ให้นม",
+        "โรคไต",
+        "โรคตับ",
+        "ibuprofen",
+        "paracetamol",
+        "alcohol",
+        "milk",
+        "coffee",
+        "pregnant",
+        "breastfeeding",
+        "interaction",
+        "sideeffect",
+        "side effect",
+        "together",
+        "combine",
+        "一起",
+        "可以",
+        "相互作用",
+    )
+    compact_original = re.sub(r"\s+", "", original)
+    padded_original = f" {original} "
+    english_phrase_markers = (" with ", " take it with ", " take this with ")
+    return (
+        any(marker in normalized or marker in original or marker in compact_original for marker in markers)
+        or any(marker in padded_original for marker in english_phrase_markers)
+    )
+
+
+def build_followup_answer_prompt(context: dict, user_query: str, lang: str) -> str:
+    context_for_prompt = {
+        "primary_drug": {
+            "trade_name": context.get("trade_name"),
+            "generic_name": context.get("generic_name"),
+            "indication": context.get("indication"),
+            "dosage": context.get("dosage"),
+            "instruction": context.get("instruction"),
+            "warning": context.get("warning"),
+        },
+        "raw_context": context.get("raw_context_json") or {},
+    }
+    return f"""
+You are GinyaKan, a warm and careful AI pharmacist assistant for Banya Sookjai pharmacy.
+Answer the user's follow-up question about the medicine context below.
+
+Medicine context:
+{json.dumps(context_for_prompt, ensure_ascii=False)}
+
+User question:
+{user_query}
+
+Rules:
+- {build_language_instruction(lang)}
+- Medical safety first. If the answer is uncertain or high risk, recommend consulting a doctor or pharmacist.
+- For drug interaction questions, classify as safe, warning, or danger.
+- If the other drug, food, condition, or dose is unclear, use status "warning" and ask for clarification.
+- Do not invent facts beyond general medication safety knowledge and the provided medicine context.
+- Keep the answer concise for LINE mobile reading.
+- Return JSON only. Do not include markdown or extra text.
+
+Required JSON:
+{{
+  "status": "safe | warning | danger",
+  "headline": "short headline",
+  "explanation": "clear explanation, no more than 3-4 short lines",
+  "recommendation_action": "next action such as spacing hours, monitoring, or consulting pharmacist",
+  "disclaimer": "short safety note"
+}}
+""".strip()
+
+
+def normalize_followup_status(status: str | None) -> str:
+    normalized = str(status or "").strip().lower()
+    if normalized in FOLLOWUP_STATUS_STYLES:
+        return normalized
+    return "warning"
+
+
+def parse_followup_answer(raw_text: str) -> dict:
+    clean_text = (raw_text or "").strip().replace("```json", "").replace("```", "").strip()
+    data = json.loads(clean_text)
+    return {
+        "status": normalize_followup_status(data.get("status")),
+        "headline": str(data.get("headline") or "").strip(),
+        "explanation": str(data.get("explanation") or "").strip(),
+        "recommendation_action": str(data.get("recommendation_action") or "").strip(),
+        "disclaimer": str(data.get("disclaimer") or "").strip(),
+    }
+
+
+def answer_medicine_followup(client, user_language: str, context: dict, user_query: str) -> dict:
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[build_followup_answer_prompt(context, user_query, user_language)],
+        config={"response_mime_type": "application/json"},
+    )
+    data = parse_followup_answer(response.text)
+    if not data["headline"]:
+        data["headline"] = {
+            "th": "ควรตรวจสอบเพิ่มเติมครับ",
+            "en": "Please check with a pharmacist",
+            "my": "ဆေးဝါးကျွမ်းကျင်သူနှင့် စစ်ဆေးပါ",
+            "lo": "ຄວນກວດສອບເພີ່ມເຕີມ",
+            "zh": "建议进一步确认",
+        }.get(normalize_language(user_language), "ควรตรวจสอบเพิ่มเติมครับ")
+    return data
+
+
+def build_followup_flex_reply(lang: str, answer: dict) -> dict:
+    status = normalize_followup_status(answer.get("status"))
+    style = FOLLOWUP_STATUS_STYLES[status]
+    contact_pharmacist_text = t(lang, "contact_pharmacist_button")
+    contents = [
+        {
+            "type": "text",
+            "text": f"{style['icon']} {answer.get('headline') or ''}",
+            "weight": "bold",
+            "size": "md",
+            "wrap": True,
+            "color": "#222222",
+        }
+    ]
+
+    if answer.get("explanation"):
+        contents.append(
+            {
+                "type": "text",
+                "text": answer["explanation"],
+                "wrap": True,
+                "size": "sm",
+                "color": "#444444",
+                "margin": "md",
+            }
+        )
+
+    if answer.get("recommendation_action"):
+        contents.append({"type": "separator", "margin": "lg"})
+        contents.append(
+            {
+                "type": "text",
+                "text": get_followup_text(lang, "recommendation"),
+                "weight": "bold",
+                "size": "sm",
+                "color": style["color"],
+                "margin": "md",
+            }
+        )
+        contents.append(
+            {
+                "type": "text",
+                "text": answer["recommendation_action"],
+                "wrap": True,
+                "size": "sm",
+                "color": "#444444",
+            }
+        )
+
+    if answer.get("disclaimer"):
+        contents.append(
+            {
+                "type": "text",
+                "text": f"{get_followup_text(lang, 'disclaimer')}: {answer['disclaimer']}",
+                "wrap": True,
+                "size": "xs",
+                "color": "#888888",
+                "margin": "lg",
+            }
+        )
+
+    return {
+        "type": "bubble",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": style["color"],
+            "contents": [
+                {
+                    "type": "text",
+                    "text": f"💬 {get_followup_text(lang, 'title')}",
+                    "weight": "bold",
+                    "color": "#FFFFFF",
+                    "wrap": True,
+                }
+            ],
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "sm",
+            "contents": contents,
+        },
+        "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "button",
+                    "style": "primary",
+                    "action": {
+                        "type": "message",
+                        "label": contact_pharmacist_text,
+                        "text": contact_pharmacist_text,
+                    },
+                }
+            ],
+        },
+    }
+
+
 def get_timing_text(lang: str, timing: str) -> str:
     key = "timing_before" if timing == "before" else "timing_after"
     return t(lang, key)
@@ -3478,6 +3816,7 @@ def _handle_image_impl(event, user_language: str):
 
         db_data = match_result["db_data"]
         display_data = build_medicine_label_display_data(ai_client, db_data, user_language)
+        remember_user_medicine_context(user_id, db_data, display_data, user_language)
         generic_name = get_medicine_display_name(display_data, user_language)
         instruction_for_reminder = db_data.get("instruction_time") or ""
         time_payload, meal_timing = build_reminder_payload_from_instruction(instruction_for_reminder)
@@ -3850,6 +4189,7 @@ def build_liff_label_result_message(user_id: str, source_image_path: str, upload
             return TextSendMessage(text=t(user_language, "ocr_no_database_match", drug=matched_keyword or search_candidates[0]))
 
         display_data = build_medicine_label_display_data(ai_client, db_data, user_language)
+        remember_user_medicine_context(user_id, db_data, display_data, user_language)
         generic_name = get_medicine_display_name(display_data, user_language)
         instruction_for_reminder = db_data.get("instruction_time") or ""
         time_payload, meal_timing = build_reminder_payload_from_instruction(instruction_for_reminder)
@@ -4257,6 +4597,48 @@ def handle_text_message(event):
         line_bot_api.reply_message(event.reply_token, FlexSendMessage(alt_text="ตั้งเวลาแจ้งเตือน", contents=flex_time_picker))
         return # หยุดการทำงานตรงนี้
     # ==========================================
+
+    try:
+        recent_medicine_context = get_user_medicine_context(user_id)
+    except Exception as e:
+        print(f"⚠️ Could not load medicine follow-up context for {user_id}: {e}")
+        recent_medicine_context = None
+
+    if recent_medicine_context and is_followup_medicine_question(user_text):
+        try:
+            client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+            followup_answer = answer_medicine_followup(
+                client,
+                user_language,
+                recent_medicine_context,
+                user_text,
+            )
+            reply_or_push_message(
+                line_bot_api,
+                user_id,
+                event.reply_token,
+                FlexSendMessage(
+                    alt_text=get_followup_text(user_language, "alt"),
+                    contents=build_followup_flex_reply(user_language, followup_answer),
+                ),
+            )
+        except json.JSONDecodeError as e:
+            print(f"❌ Follow-up JSON parse error: {e}")
+            reply_or_push_message(
+                line_bot_api,
+                user_id,
+                event.reply_token,
+                TextSendMessage(text=t(user_language, "ai_format_error")),
+            )
+        except Exception as e:
+            print(f"❌ Follow-up answer error: {e}")
+            reply_or_push_message(
+                line_bot_api,
+                user_id,
+                event.reply_token,
+                TextSendMessage(text=t(user_language, "generic_processing_error")),
+            )
+        return
 
     # 1. 🎯 สร้าง Prompt ให้ Gemini ช่วยแยกแยะเจตนา (Intent Classification)
     system_prompt = """
