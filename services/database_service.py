@@ -129,8 +129,11 @@ def search_drug_identity_matches(candidates: list[str], limit: int = 8) -> list[
                     d.canonical_name,
                     d.trade_name,
                     d.generic_name,
+                    d.source_name as identity_source_name,
+                    d.source_priority,
                     a.alias_name as matched_alias,
                     a.alias_type,
+                    a.source_name as alias_source_name,
                     greatest(
                         similarity(a.normalized_alias, input.normalized_candidate),
                         case

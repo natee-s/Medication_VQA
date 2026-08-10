@@ -3425,6 +3425,37 @@ def extract_ocr_search_candidates(data: dict) -> list[str]:
     return candidates
 
 
+def log_drug_identity_matches(identity_matches: list[dict]) -> None:
+    if not identity_matches:
+        return
+
+    print(f"[Drug Identity] alias matches found: {len(identity_matches)}")
+    for match in identity_matches[:5]:
+        score = match.get("match_score")
+        try:
+            score_text = f"{float(score):.3f}"
+        except (TypeError, ValueError):
+            score_text = "-"
+
+        source_name = (
+            match.get("alias_source_name")
+            or match.get("identity_source_name")
+            or match.get("source_name")
+            or "-"
+        )
+        source_row = match.get("source_row_number")
+        print(
+            "[Drug Identity] alias matched: "
+            f"input='{match.get('candidate') or '-'}' -> "
+            f"alias='{match.get('matched_alias') or '-'}' "
+            f"type={match.get('alias_type') or '-'} "
+            f"source={source_name} "
+            f"canonical='{match.get('canonical_name') or '-'}' "
+            f"source_row={source_row if source_row is not None else '-'} "
+            f"score={score_text}"
+        )
+
+
 def expand_candidates_with_drug_identity(candidates: list[str]) -> tuple[list[str], list[dict]]:
     expanded_candidates = list(candidates)
     if not candidates:
@@ -3435,6 +3466,8 @@ def expand_candidates_with_drug_identity(candidates: list[str]) -> tuple[list[st
     except Exception as exc:
         print(f"Drug identity expansion skipped: {exc}")
         return expanded_candidates, []
+
+    log_drug_identity_matches(identity_matches)
 
     for match in identity_matches:
         append_unique_medicine_candidate(expanded_candidates, match.get("canonical_name"))
