@@ -235,6 +235,28 @@ class MainLanguageCommandTests(unittest.TestCase):
         self.assertTrue(main.is_alarm_setting_command("เปลี่ยนเวลาแจ้งเตือน\nAlarm setting"))
 
 
+class MainContactPharmacistTests(unittest.TestCase):
+    def test_contact_pharmacist_command_accepts_localized_labels(self):
+        import main
+
+        self.assertTrue(main.is_contact_pharmacist_command(main.t("th", "contact_pharmacist_button")))
+        self.assertTrue(main.is_contact_pharmacist_command(main.t("en", "contact_pharmacist_button")))
+        self.assertTrue(main.is_contact_pharmacist_command(main.t("zh", "contact_pharmacist_button")))
+
+    def test_contact_pharmacist_flex_has_clickable_links(self):
+        import main
+
+        flex = main.build_contact_pharmacist_flex_reply("th")
+        actions = [button["action"] for button in flex["footer"]["contents"]]
+
+        self.assertEqual(actions[0]["type"], "uri")
+        self.assertEqual(actions[0]["uri"], "https://lin.ee/9sirsf1")
+        self.assertEqual(actions[1]["type"], "uri")
+        self.assertEqual(actions[1]["uri"], "https://www.facebook.com/banyasookjai")
+        self.assertEqual(actions[2]["type"], "uri")
+        self.assertEqual(actions[2]["uri"], "tel:0612899146")
+
+
 class MainPromptLanguageTests(unittest.TestCase):
     def test_prompt_instruction_mentions_selected_language(self):
         import main

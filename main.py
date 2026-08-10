@@ -1823,6 +1823,23 @@ ALARM_SETTING_COMMANDS = {
     "⏰เปลี่ยนเวลาแจ้งเตือน/Alrm setting",
 }
 
+CONTACT_PHARMACIST_COMMANDS = {
+    "ติดต่อเภสัชกร",
+    "Contact pharmacist",
+    "Contact Pharmacist",
+    "联系药师",
+}
+
+PHARMACY_CONTACT = {
+    "name": "บ้านยาสุขใจ",
+    "phone_display": "061-289-9146",
+    "phone_uri": "tel:0612899146",
+    "line_display": "https://lin.ee/9sirsf1",
+    "line_uri": "https://lin.ee/9sirsf1",
+    "facebook_display": "https://www.facebook.com/banyasookjai",
+    "facebook_uri": "https://www.facebook.com/banyasookjai",
+}
+
 
 def reply_or_push_message(line_api, user_id: str, reply_token: str, messages):
     try:
@@ -1887,6 +1904,14 @@ def is_alarm_setting_command(text: str) -> bool:
         or ("แจ้งเตือน" in normalized_text and "alrm" in lowered_text)
     )
 
+def is_contact_pharmacist_command(text: str) -> bool:
+    localized_commands = {
+        messages.get("contact_pharmacist_button", "")
+        for messages in MESSAGES.values()
+        if messages.get("contact_pharmacist_button")
+    }
+    return command_matches(text, CONTACT_PHARMACIST_COMMANDS | localized_commands)
+
 
 def t(lang: str, key: str, **kwargs) -> str:
     language = normalize_language(lang)
@@ -1937,6 +1962,116 @@ Thai search query:
     except Exception as e:
         print(f"⚠️ [Search Query Translation] fallback to original text: {e}")
         return original_text
+
+
+def build_contact_pharmacist_flex_reply(lang: str) -> dict:
+    contact = PHARMACY_CONTACT
+    return {
+        "type": "bubble",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#1DB446",
+            "paddingAll": "18px",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": f"👩‍⚕️ {contact['name']}",
+                    "weight": "bold",
+                    "size": "lg",
+                    "color": "#FFFFFF",
+                    "wrap": True,
+                },
+                {
+                    "type": "text",
+                    "text": "ช่องทางติดต่อเภสัชกร",
+                    "size": "sm",
+                    "color": "#E8F5E9",
+                    "margin": "sm",
+                    "wrap": True,
+                },
+            ],
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "md",
+            "contents": [
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "spacing": "sm",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": f"โทร. {contact['phone_display']}",
+                            "weight": "bold",
+                            "size": "md",
+                            "color": "#222222",
+                            "wrap": True,
+                        },
+                        {
+                            "type": "text",
+                            "text": f"Line: {contact['line_display']}",
+                            "size": "sm",
+                            "color": "#06C755",
+                            "wrap": True,
+                        },
+                        {
+                            "type": "text",
+                            "text": f"Facebook: {contact['facebook_display']}",
+                            "size": "sm",
+                            "color": "#1877F2",
+                            "wrap": True,
+                        },
+                    ],
+                },
+                {"type": "separator", "margin": "md"},
+                {
+                    "type": "text",
+                    "text": "หากมีอาการผิดปกติหรือคำถามเรื่องยา สามารถติดต่อเภสัชกรได้ตามช่องทางด้านล่างครับ",
+                    "size": "xs",
+                    "color": "#777777",
+                    "wrap": True,
+                },
+            ],
+        },
+        "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "sm",
+            "contents": [
+                {
+                    "type": "button",
+                    "style": "primary",
+                    "color": "#06C755",
+                    "action": {
+                        "type": "uri",
+                        "label": "เปิด LINE",
+                        "uri": contact["line_uri"],
+                    },
+                },
+                {
+                    "type": "button",
+                    "style": "secondary",
+                    "action": {
+                        "type": "uri",
+                        "label": "เปิด Facebook",
+                        "uri": contact["facebook_uri"],
+                    },
+                },
+                {
+                    "type": "button",
+                    "style": "secondary",
+                    "action": {
+                        "type": "uri",
+                        "label": "โทรหาร้านยา",
+                        "uri": contact["phone_uri"],
+                    },
+                },
+            ],
+        },
+    }
 
 
 def build_rag_flex_reply(lang: str, ai_data: dict) -> dict:
@@ -4649,6 +4784,17 @@ def handle_text_message(event):
             FlexSendMessage(
                 alt_text=t(user_language, "language_picker_alt"),
                 contents=build_language_picker(user_language),
+            ),
+        )
+        return
+
+    if is_contact_pharmacist_command(user_text):
+        print(f"Contact pharmacist card requested by {user_id}")
+        line_bot_api.reply_message(
+            event.reply_token,
+            FlexSendMessage(
+                alt_text="ติดต่อเภสัชกร บ้านยาสุขใจ",
+                contents=build_contact_pharmacist_flex_reply(user_language),
             ),
         )
         return
