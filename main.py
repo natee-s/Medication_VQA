@@ -3726,6 +3726,82 @@ def search_medicine_candidates_in_db(candidates: list[str], ocr_data: dict | Non
     return None, candidates[0] if candidates else ""
 
 
+DIRECT_DRUG_NAME_QUERY_MAX_CHARS = 80
+DIRECT_DRUG_NAME_QUERY_REJECT_TERMS = (
+    "?",
+    "？",
+    "ไหม",
+    "มั้ย",
+    "อะไร",
+    "อย่างไร",
+    "ยังไง",
+    "ห้าม",
+    "กินกับ",
+    "พร้อมกับ",
+    "ร่วมกับ",
+    "นาน",
+    "กี่วัน",
+    "ปวด",
+    "เจ็บ",
+    "ไข้",
+    "ไอ",
+    "น้ำมูก",
+    "ท้องเสีย",
+    "can i",
+    "with",
+    "how",
+    "what",
+    "why",
+    "when",
+)
+
+
+def extract_direct_drug_name_candidate(user_text: str) -> str:
+    candidate = re.sub(r"\s+", " ", str(user_text or "").strip())
+    candidate = re.sub(
+        r"^(ยา|ชื่อยา|ข้อมูลยา|drug|medicine)\s*[:：\-]?\s*",
+        "",
+        candidate,
+        flags=re.IGNORECASE,
+    ).strip()
+    return candidate
+
+
+def is_likely_direct_drug_name_query(user_text: str) -> bool:
+    candidate = extract_direct_drug_name_candidate(user_text)
+    if not candidate or len(candidate) > DIRECT_DRUG_NAME_QUERY_MAX_CHARS:
+        return False
+
+    lowered = candidate.casefold()
+    if any(term in lowered for term in DIRECT_DRUG_NAME_QUERY_REJECT_TERMS):
+        return False
+
+    normalized = normalize_medicine_match_text(candidate)
+    if len(normalized) < 3:
+        return False
+
+    words = re.findall(r"[A-Za-z0-9ก-๙]+", candidate)
+    return len(words) <= 6
+
+
+def resolve_direct_drug_name_query(user_text: str):
+    if not is_likely_direct_drug_name_query(user_text):
+        return None, ""
+
+    candidate = extract_direct_drug_name_candidate(user_text)
+    db_data, matched_keyword = search_medicine_candidates_in_db([candidate])
+    if not db_data:
+        print(f"[Drug Name Query] no direct medicine match for '{candidate}'")
+        return None, candidate
+
+    print(
+        "[Drug Name Query] resolved: "
+        f"input='{user_text}' candidate='{candidate}' matched='{matched_keyword}' "
+        f"trade='{db_data.get('trade_name') or '-'}' generic='{db_data.get('generic_name') or '-'}'"
+    )
+    return db_data, matched_keyword or candidate
+
+
 # ==========================================
 # 3. ฟังก์ชันหลัก: จัดการเมื่อมีผู้ใช้ส่งรูปภาพเข้ามา
 # ==========================================
@@ -4714,6 +4790,44 @@ def handle_text_message(event):
         line_bot_api.reply_message(event.reply_token, FlexSendMessage(alt_text="ตั้งเวลาแจ้งเตือน", contents=flex_time_picker))
         return # หยุดการทำงานตรงนี้
     # ==========================================
+
+    direct_drug_data, direct_drug_keyword = resolve_direct_drug_name_query(user_text)
+    if direct_drug_data:
+        try:
+            ai_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+            display_data = build_medicine_label_display_data(ai_client, direct_drug_data, user_language)
+            remember_user_medicine_context(user_id, direct_drug_data, display_data, user_language)
+            generic_name = get_medicine_display_name(display_data, user_language)
+            instruction_for_reminder = direct_drug_data.get("instruction_time") or ""
+            time_payload, meal_timing = build_reminder_payload_from_instruction(instruction_for_reminder)
+            print(
+                "[Drug Name Query] reply medicine label: "
+                f"drug={generic_name} keyword={direct_drug_keyword} "
+                f"reminder_payload={time_payload} meal_timing={meal_timing}"
+            )
+            reply_or_push_message(
+                line_bot_api,
+                user_id,
+                event.reply_token,
+                FlexSendMessage(
+                    alt_text=t(user_language, "medicine_label_alt", drug=generic_name),
+                    contents=build_medicine_label_flex_reply(
+                        user_language,
+                        display_data,
+                        time_payload,
+                        meal_timing,
+                    ),
+                ),
+            )
+        except Exception as e:
+            print(f"❌ Direct drug name query reply error: {e}")
+            reply_or_push_message(
+                line_bot_api,
+                user_id,
+                event.reply_token,
+                TextSendMessage(text=t(user_language, "generic_processing_error")),
+            )
+        return
 
     try:
         recent_medicine_context = get_user_medicine_context(user_id)

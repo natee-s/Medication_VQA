@@ -459,6 +459,15 @@ class MainMedicineLabelFlexLocalizationTests(unittest.TestCase):
 
 
 class MainMedicineFollowupTests(unittest.TestCase):
+    def test_direct_drug_name_query_detection_is_conservative(self):
+        import main
+
+        self.assertTrue(main.is_likely_direct_drug_name_query("paracetamol"))
+        self.assertTrue(main.is_likely_direct_drug_name_query("ยา cetirizine"))
+        self.assertFalse(main.is_likely_direct_drug_name_query("Can I take it with paracetamol?"))
+        self.assertFalse(main.is_likely_direct_drug_name_query("กินกับ paracetamol ได้ไหม"))
+        self.assertFalse(main.is_likely_direct_drug_name_query("ปวดหัว"))
+
     def test_followup_question_detection_catches_interaction_question(self):
         import main
 
