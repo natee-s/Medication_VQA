@@ -1832,7 +1832,10 @@ CONTACT_PHARMACIST_COMMANDS = {
 
 PHARMACY_CONTACT = {
     "name": "บ้านยาสุขใจ",
+    "shop_label": "ร้านขายยา : บ้านยาสุขใจ",
+    "address": "เยื้องธนาคารกสิกรไทย สาขาหนองแค อ.หนองแค จ.สระบุรี",
     "phone_display": "061-289-9146",
+    "phone_display_spaced": "061 289 9146",
     "phone_uri": "tel:0612899146",
     "line_display": "https://lin.ee/9sirsf1",
     "line_uri": "https://lin.ee/9sirsf1",
@@ -2035,6 +2038,150 @@ def build_contact_pharmacist_flex_reply(lang: str) -> dict:
                     "wrap": True,
                 },
             ],
+        },
+        "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "sm",
+            "contents": [
+                {
+                    "type": "button",
+                    "style": "primary",
+                    "color": "#06C755",
+                    "action": {
+                        "type": "uri",
+                        "label": "เปิด LINE",
+                        "uri": contact["line_uri"],
+                    },
+                },
+                {
+                    "type": "button",
+                    "style": "secondary",
+                    "action": {
+                        "type": "uri",
+                        "label": "เปิด Facebook",
+                        "uri": contact["facebook_uri"],
+                    },
+                },
+                {
+                    "type": "button",
+                    "style": "secondary",
+                    "action": {
+                        "type": "uri",
+                        "label": "โทรหาร้านยา",
+                        "uri": contact["phone_uri"],
+                    },
+                },
+            ],
+        },
+    }
+
+
+def build_medicine_finished_contact_flex(lang: str, drug_name: str = "") -> dict:
+    contact = PHARMACY_CONTACT
+    body_contents = []
+
+    if drug_name:
+        body_contents.append(
+            {
+                "type": "text",
+                "text": f"ระบบบันทึกว่า {drug_name} หมดแล้ว และหยุดการแจ้งเตือนรายการนี้ให้เรียบร้อยครับ",
+                "size": "sm",
+                "color": "#555555",
+                "wrap": True,
+            }
+        )
+
+    body_contents.extend(
+        [
+            {
+                "type": "text",
+                "text": "สามารถซื้อยาหรือปรึกษาได้ที่",
+                "weight": "bold",
+                "size": "md",
+                "color": "#222222",
+                "wrap": True,
+                "margin": "md" if drug_name else "none",
+            },
+            {"type": "separator", "margin": "md"},
+            {
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "sm",
+                "margin": "md",
+                "contents": [
+                    {
+                        "type": "text",
+                        "text": contact["shop_label"],
+                        "size": "sm",
+                        "weight": "bold",
+                        "color": "#222222",
+                        "wrap": True,
+                    },
+                    {
+                        "type": "text",
+                        "text": f"ที่อยู่ {contact['address']}",
+                        "size": "sm",
+                        "color": "#444444",
+                        "wrap": True,
+                    },
+                    {
+                        "type": "text",
+                        "text": f"โทร. {contact['phone_display_spaced']}",
+                        "size": "sm",
+                        "color": "#444444",
+                        "wrap": True,
+                    },
+                    {
+                        "type": "text",
+                        "text": f"Line: {contact['line_display']}",
+                        "size": "xs",
+                        "color": "#06C755",
+                        "wrap": True,
+                    },
+                    {
+                        "type": "text",
+                        "text": f"Facebook: {contact['facebook_display']}",
+                        "size": "xs",
+                        "color": "#1877F2",
+                        "wrap": True,
+                    },
+                ],
+            },
+        ]
+    )
+
+    return {
+        "type": "bubble",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#1DB446",
+            "paddingAll": "18px",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "💊 ยาหมดแล้วใช่ไหมครับ",
+                    "weight": "bold",
+                    "size": "lg",
+                    "color": "#FFFFFF",
+                    "wrap": True,
+                },
+                {
+                    "type": "text",
+                    "text": "บ้านยาสุขใจพร้อมให้คำปรึกษาครับ",
+                    "size": "sm",
+                    "color": "#E8F5E9",
+                    "margin": "sm",
+                    "wrap": True,
+                },
+            ],
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "md",
+            "contents": body_contents,
         },
         "footer": {
             "type": "box",
@@ -4670,8 +4817,13 @@ def handle_postback(event):
                 # อัปเดตให้ยาตัวนี้ is_active = False ในฐานข้อมูล
                 deactivate_reminder(user_id, drug_name)
                 
-                reply_text = build_stop_drug_reply(user_language, drug_name)
-                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+                line_bot_api.reply_message(
+                    event.reply_token,
+                    FlexSendMessage(
+                        alt_text=f"ยาหมดแล้ว: {drug_name}" if drug_name else "ยาหมดแล้ว",
+                        contents=build_medicine_finished_contact_flex(user_language, drug_name),
+                    ),
+                )
                 print(f"✅ ยกเลิกการแจ้งเตือนยา {drug_name} ให้ผู้ใช้ {user_id} สำเร็จ")
                 return
 

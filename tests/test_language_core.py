@@ -256,6 +256,36 @@ class MainContactPharmacistTests(unittest.TestCase):
         self.assertEqual(actions[2]["type"], "uri")
         self.assertEqual(actions[2]["uri"], "tel:0612899146")
 
+    def test_medicine_finished_contact_flex_has_shop_details_and_links(self):
+        import main
+
+        flex = main.build_medicine_finished_contact_flex("th", "PROCTASE-P")
+        actions = [button["action"] for button in flex["footer"]["contents"]]
+
+        def collect_text_values(node):
+            if isinstance(node, dict):
+                values = []
+                if "text" in node:
+                    values.append(node["text"])
+                for value in node.values():
+                    values.extend(collect_text_values(value))
+                return values
+            if isinstance(node, list):
+                values = []
+                for item in node:
+                    values.extend(collect_text_values(item))
+                return values
+            return []
+
+        text_values = collect_text_values(flex)
+        self.assertIn("สามารถซื้อยาหรือปรึกษาได้ที่", text_values)
+        self.assertIn("ร้านขายยา : บ้านยาสุขใจ", text_values)
+        self.assertIn("ที่อยู่ เยื้องธนาคารกสิกรไทย สาขาหนองแค อ.หนองแค จ.สระบุรี", text_values)
+        self.assertIn("โทร. 061 289 9146", text_values)
+        self.assertEqual(actions[0]["uri"], "https://lin.ee/9sirsf1")
+        self.assertEqual(actions[1]["uri"], "https://www.facebook.com/banyasookjai")
+        self.assertEqual(actions[2]["uri"], "tel:0612899146")
+
 
 class MainPromptLanguageTests(unittest.TestCase):
     def test_prompt_instruction_mentions_selected_language(self):
