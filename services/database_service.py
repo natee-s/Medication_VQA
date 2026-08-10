@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -10,6 +11,7 @@ SUPPORTED_LANGUAGES = ("th", "en", "my", "lo", "zh")
 DEFAULT_LANGUAGE = "th"
 DB_BACKEND = os.environ.get("DB_BACKEND", "supabase").strip().lower()
 DATABASE_URL = os.environ.get("DATABASE_URL")
+DRUG_IDENTITY_MIN_SIMILARITY = float(os.environ.get("DRUG_IDENTITY_MIN_SIMILARITY", "0.78"))
 
 _postgres_conn = None
 
@@ -80,6 +82,124 @@ def _medication_search_like_query() -> str:
         where generic_name ilike %(term)s
            or trade_name ilike %(term)s
     """
+
+
+def normalize_drug_identity_text(value: str | None) -> str:
+    return re.sub(r"[^A-Z0-9ก-๙]+", "", str(value or "").upper())
+
+
+def search_drug_identity_matches(candidates: list[str], limit: int = 8) -> list[dict]:
+    """Resolve OCR/user drug text to canonical identities without replacing the main medicine table."""
+    if not candidates or not is_database_available():
+        return []
+
+    normalized_inputs: list[tuple[str, str]] = []
+    seen = set()
+    for candidate in candidates:
+        normalized = normalize_drug_identity_text(candidate)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        normalized_inputs.append((str(candidate), normalized))
+
+    if not normalized_inputs:
+        return []
+
+    if not _use_postgres():
+        return []
+
+    values_sql = ", ".join(["(%s, %s)"] * len(normalized_inputs))
+    params: list[Any] = []
+    for candidate, normalized in normalized_inputs:
+        params.extend([candidate, normalized])
+    params.extend([DRUG_IDENTITY_MIN_SIMILARITY, limit])
+
+    try:
+        return _fetch_all(
+            f"""
+            with input(candidate, normalized_candidate) as (
+                values {values_sql}
+            ),
+            scored as (
+                select
+                    input.candidate,
+                    input.normalized_candidate,
+                    d.id::text as drug_identity_id,
+                    d.source_row_number,
+                    d.canonical_name,
+                    d.trade_name,
+                    d.generic_name,
+                    a.alias_name as matched_alias,
+                    a.alias_type,
+                    greatest(
+                        similarity(a.normalized_alias, input.normalized_candidate),
+                        case
+                            when a.normalized_alias = input.normalized_candidate then 1.0
+                            when length(a.normalized_alias) >= 5
+                                 and input.normalized_candidate like ('%%' || a.normalized_alias || '%%') then 0.96
+                            when length(input.normalized_candidate) >= 5
+                                 and a.normalized_alias like ('%%' || input.normalized_candidate || '%%') then 0.96
+                            else 0.0
+                        end
+                    ) as match_score
+                from input
+                join public.drug_aliases a
+                  on a.normalized_alias %% input.normalized_candidate
+                  or a.normalized_alias = input.normalized_candidate
+                  or (
+                      length(a.normalized_alias) >= 5
+                      and input.normalized_candidate like ('%%' || a.normalized_alias || '%%')
+                  )
+                  or (
+                      length(input.normalized_candidate) >= 5
+                      and a.normalized_alias like ('%%' || input.normalized_candidate || '%%')
+                  )
+                join public.drug_identity d on d.id = a.drug_identity_id
+                where d.is_active is true
+            )
+            select *
+            from scored
+            where match_score >= %s
+            order by match_score desc, source_row_number nulls last
+            limit %s
+            """,
+            tuple(params),
+        )
+    except Exception as exc:
+        print(f"Drug identity search skipped: {exc}")
+        return []
+
+
+def search_medication_rows_by_source_numbers(source_row_numbers: list[Any]) -> list[dict]:
+    if not source_row_numbers or not is_database_available():
+        return []
+
+    numbers: list[int] = []
+    for value in source_row_numbers:
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            continue
+        if number not in numbers:
+            numbers.append(number)
+
+    if not numbers:
+        return []
+
+    if not _use_postgres():
+        response = (
+            supabase.table("Medication_VQA")
+            .select("*")
+            .in_("source_row_number", numbers)
+            .execute()
+        )
+        return response.data or []
+
+    placeholders = ", ".join(["%s"] * len(numbers))
+    return _fetch_all(
+        f'select * from public."Medication_VQA" where source_row_number in ({placeholders})',
+        tuple(numbers),
+    )
 
 
 def search_medication_rows(drug_name: str) -> list[dict]:

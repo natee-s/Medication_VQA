@@ -769,48 +769,53 @@ class LiffCameraTests(unittest.IsolatedAsyncioTestCase):
     def test_fuzzy_medicine_search_tolerates_small_ocr_spacing_typo(self):
         import main
 
-        class FakeResult:
-            def __init__(self, data):
-                self.data = data
+        rows = [
+            {"trade_name": "MYOXAN", "generic_name": "TOLPERISONE"},
+            {"trade_name": "TYLENOL", "generic_name": "PARACETAMOL"},
+        ]
 
-        class FakeMedicineQuery:
-            def __init__(self, rows):
-                self.rows = rows
-                self.exact_query = None
-
-            def select(self, columns):
-                return self
-
-            def or_(self, query):
-                self.exact_query = query
-                return self
-
-            def execute(self):
-                if self.exact_query:
-                    return FakeResult([])
-                return FakeResult(self.rows)
-
-        class FakeMedicineSupabase:
-            def __init__(self, rows):
-                self.rows = rows
-
-            def table(self, name):
-                self.assert_name = name
-                return FakeMedicineQuery(self.rows)
-
-        old_supabase = main.supabase
-        main.supabase = FakeMedicineSupabase(
-            [
-                {"trade_name": "MYOXAN", "generic_name": "TOLPERISONE"},
-                {"trade_name": "TYLENOL", "generic_name": "PARACETAMOL"},
-            ]
-        )
-        try:
+        with (
+            patch.object(main, "search_drug_identity_matches", return_value=[]),
+            patch.object(main, "search_medicine_rows_in_db", return_value=[]),
+            patch.object(main, "fetch_all_medication_rows", return_value=rows),
+            patch.object(main, "is_database_available", return_value=True),
+        ):
             db_data, matched_keyword = main.search_medicine_candidates_in_db(["TOLI ERISONE"])
-        finally:
-            main.supabase = old_supabase
 
         self.assertEqual(db_data["generic_name"], "TOLPERISONE")
+        self.assertEqual(matched_keyword, "TOLI ERISONE")
+
+    def test_drug_identity_layer_can_resolve_ocr_alias_before_exact_search(self):
+        import main
+
+        db_row = {
+            "source_row_number": 337,
+            "label_name": "1x3",
+            "trade_name": "MYOXAN 50 MG 10'S",
+            "generic_name": "TOLPERISONE 50 mg",
+            "dosage_frequency": "1 tablet 3 times daily",
+            "instruction_time": "after meal morning-noon-evening",
+        }
+        identity_match = {
+            "candidate": "TOLI ERISONE",
+            "source_row_number": 337,
+            "canonical_name": "TOLPERISONE 50 mg",
+            "trade_name": "MYOXAN 50 MG 10'S",
+            "generic_name": "TOLPERISONE 50 mg",
+            "matched_alias": "TOLPERISONE 50 mg",
+            "match_score": 0.91,
+        }
+
+        with (
+            patch.object(main, "search_drug_identity_matches", return_value=[identity_match]),
+            patch.object(main, "search_medication_rows_by_source_numbers", return_value=[db_row]),
+            patch.object(main, "search_medicine_rows_in_db", return_value=[]),
+            patch.object(main, "search_medicine_fuzzy_rows_in_db", return_value=[]),
+        ):
+            db_data, matched_keyword = main.search_medicine_candidates_in_db(["TOLI ERISONE"])
+
+        self.assertEqual(db_data["source_row_number"], 337)
+        self.assertEqual(db_data["generic_name"], "TOLPERISONE 50 mg")
         self.assertEqual(matched_keyword, "TOLI ERISONE")
 
     def test_variant_ranking_selects_matching_dosage_schedule(self):

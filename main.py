@@ -44,8 +44,10 @@ from services.database_service import (
     SUPABASE_URL,
     normalize_language,
     save_user_medicine_context,
+    search_drug_identity_matches,
     search_medication_by_generic_name,
     search_medication_rows,
+    search_medication_rows_by_source_numbers,
     set_user_language,
     update_user_default_time,
 )
@@ -3423,6 +3425,26 @@ def extract_ocr_search_candidates(data: dict) -> list[str]:
     return candidates
 
 
+def expand_candidates_with_drug_identity(candidates: list[str]) -> tuple[list[str], list[dict]]:
+    expanded_candidates = list(candidates)
+    if not candidates:
+        return expanded_candidates, []
+
+    try:
+        identity_matches = search_drug_identity_matches(candidates)
+    except Exception as exc:
+        print(f"Drug identity expansion skipped: {exc}")
+        return expanded_candidates, []
+
+    for match in identity_matches:
+        append_unique_medicine_candidate(expanded_candidates, match.get("canonical_name"))
+        append_unique_medicine_candidate(expanded_candidates, match.get("trade_name"))
+        append_unique_medicine_candidate(expanded_candidates, match.get("generic_name"))
+        append_unique_medicine_candidate(expanded_candidates, match.get("matched_alias"))
+
+    return expanded_candidates, identity_matches
+
+
 def medicine_name_similarity(left: str, right: str) -> float:
     left_norm = normalize_medicine_match_text(left)
     right_norm = normalize_medicine_match_text(right)
@@ -3622,12 +3644,33 @@ def search_medicine_fuzzy_in_db(candidates: list[str], threshold: float = 0.86):
 
 
 def search_medicine_candidates_in_db(candidates: list[str], ocr_data: dict | None = None):
+    search_candidates, identity_matches = expand_candidates_with_drug_identity(candidates)
+
+    identity_source_numbers = [
+        match.get("source_row_number")
+        for match in identity_matches
+        if match.get("source_row_number") is not None
+    ]
+    if identity_source_numbers:
+        identity_rows = search_medication_rows_by_source_numbers(identity_source_numbers)
+        if identity_rows:
+            ranked_rows = rank_medicine_rows(identity_rows, search_candidates, ocr_data)
+            best_row, best_score = ranked_rows[0]
+            best_identity = identity_matches[0]
+            print(
+                "Drug identity medicine match: "
+                f"{best_row.get('trade_name') or best_row.get('generic_name')} "
+                f"[{best_row.get('label_name') or '-'}] "
+                f"(identity={best_identity.get('matched_alias')}, score={best_score:.2f})"
+            )
+            return best_row, best_identity.get("candidate") or (candidates[0] if candidates else "")
+
     exact_rows = []
-    for candidate in candidates:
+    for candidate in search_candidates:
         exact_rows.extend(search_medicine_rows_in_db(candidate))
 
     if exact_rows:
-        ranked_rows = rank_medicine_rows(exact_rows, candidates, ocr_data)
+        ranked_rows = rank_medicine_rows(exact_rows, search_candidates, ocr_data)
         best_row, best_score = ranked_rows[0]
         print(
             "🔎 Ranked medicine match: "
@@ -3636,9 +3679,9 @@ def search_medicine_candidates_in_db(candidates: list[str], ocr_data: dict | Non
         )
         return best_row, candidates[0] if candidates else ""
 
-    fuzzy_rows = search_medicine_fuzzy_rows_in_db(candidates)
+    fuzzy_rows = search_medicine_fuzzy_rows_in_db(search_candidates)
     if fuzzy_rows:
-        ranked_rows = rank_medicine_rows(fuzzy_rows, candidates, ocr_data)
+        ranked_rows = rank_medicine_rows(fuzzy_rows, search_candidates, ocr_data)
         best_row, best_score = ranked_rows[0]
         print(
             "🔎 Ranked fuzzy medicine match: "
