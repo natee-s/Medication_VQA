@@ -68,6 +68,11 @@ MAX_UPLOAD_IMAGE_SIZE_MB = 3.0
 TARGET_UPLOAD_IMAGE_SIZE_MB = 2.8
 MIN_LABEL_AREA_RATIO = 0.08
 QC_MIN_OBJECT_AREA_RATIO = 0.04
+GEMINI_GENERATION_MODEL = (
+    os.environ.get("GEMINI_GENERATION_MODEL")
+    or os.environ.get("GEMINI_MODEL")
+    or "gemini-3.6-flash"
+).strip()
 YOLO_LABEL_CLASS_ID = 0
 YOLO_HEADER_CLASS_ID = 1
 _yolo_obb_model = None
@@ -83,6 +88,27 @@ def is_ai_service_busy_error(error: Exception) -> bool:
         "currently experiencing high demand",
     )
     return any(marker.lower() in error_msg.lower() for marker in busy_markers)
+
+
+def is_ai_model_unavailable_error(error: Exception) -> bool:
+    error_msg = str(error)
+    markers = (
+        "404",
+        "NOT_FOUND",
+        "no longer available",
+    )
+    return "model" in error_msg.lower() and any(marker.lower() in error_msg.lower() for marker in markers)
+
+
+def is_ai_quota_error(error: Exception) -> bool:
+    error_msg = str(error)
+    markers = (
+        "429",
+        "RESOURCE_EXHAUSTED",
+        "quota",
+        "rate-limits",
+    )
+    return any(marker.lower() in error_msg.lower() for marker in markers)
 
 
 # ==========================================
@@ -1969,7 +1995,7 @@ Thai search query:
 
     try:
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=GEMINI_GENERATION_MODEL,
             contents=[prompt],
         )
         search_query = (getattr(response, "text", "") or "").strip().strip('"').strip("'")
@@ -2382,7 +2408,7 @@ Required JSON keys:
 
     try:
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=GEMINI_GENERATION_MODEL,
             contents=[prompt],
             config={"response_mime_type": "application/json"},
         )
@@ -2800,7 +2826,7 @@ def parse_followup_answer(raw_text: str) -> dict:
 
 def answer_medicine_followup(client, user_language: str, context: dict, user_query: str) -> dict:
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model=GEMINI_GENERATION_MODEL,
         contents=[build_followup_answer_prompt(context, user_query, user_language)],
         config={"response_mime_type": "application/json"},
     )
@@ -4329,7 +4355,7 @@ def _handle_image_impl(event, user_language: str):
         return
 
         response = ai_client.models.generate_content(
-            model='gemini-2.5-flash',
+            model=GEMINI_GENERATION_MODEL,
             contents=[
                 types.Part.from_bytes(data=image_bytes, mime_type='image/jpeg'),
                 """คุณคือระบบ OCR ดึงคีย์เวิร์ดชื่อยาจากภาพเพื่อนำไปค้นหาในฐานข้อมูล
@@ -4561,14 +4587,13 @@ def parse_ai_json_response(raw_text: str) -> dict:
 def extract_label_ocr_and_match(image_bytes: bytes, user_language: str, source_label: str = "image") -> dict:
     language_instruction = build_language_instruction(user_language)
     response = ai_client.models.generate_content(
-        model="gemini-2.5-flash",
+        model=GEMINI_GENERATION_MODEL,
         contents=[
             types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
             OCR_MEDICINE_LABEL_PROMPT,
             f"{language_instruction} Keep JSON keys exactly as specified; do not translate medicine names.",
         ],
         config=types.GenerateContentConfig(
-            temperature=0,
             response_mime_type="application/json",
         ),
     )
@@ -4653,14 +4678,13 @@ def build_liff_label_result_message(user_id: str, source_image_path: str, upload
         for attempt in range(2):
             try:
                 response = ai_client.models.generate_content(
-                    model="gemini-2.5-flash",
+                    model=GEMINI_GENERATION_MODEL,
                     contents=[
                         types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
                         OCR_MEDICINE_LABEL_PROMPT,
                         f"{language_instruction} Keep JSON keys exactly as specified; do not translate medicine names.",
                     ],
                     config=types.GenerateContentConfig(
-                        temperature=0,
                         response_mime_type="application/json",
                     ),
                 )
@@ -4705,6 +4729,12 @@ def build_liff_label_result_message(user_id: str, source_image_path: str, upload
     except json.JSONDecodeError:
         return TextSendMessage(text=t(user_language, "ai_format_error"))
     except Exception as e:
+        if is_ai_model_unavailable_error(e):
+            print(f"LIFF Gemini model unavailable for {upload_id}: {e}")
+            return TextSendMessage(text=t(user_language, "ai_model_unavailable_error"))
+        if is_ai_quota_error(e):
+            print(f"LIFF Gemini quota exceeded for {upload_id}: {e}")
+            return TextSendMessage(text=t(user_language, "ai_quota_error"))
         if is_ai_service_busy_error(e):
             print(f"LIFF Gemini busy after retry for {upload_id}: {e}")
             return TextSendMessage(text=t(user_language, "ai_service_busy_error"))
@@ -5212,7 +5242,7 @@ def handle_text_message(event):
         # 2. 🧠 เรียกใช้ Gemini Model แบบ Text
         # (ตรวจสอบให้แน่ใจว่าได้ประกาศ genai.configure(api_key=...) ไว้ด้านบนแล้ว)
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model=GEMINI_GENERATION_MODEL,
             contents=[system_prompt, f"ข้อความผู้ใช้: {user_text}"]
         )
         
@@ -5297,7 +5327,7 @@ def handle_text_message(event):
 
             # สเต็ปที่ 2: สั่ง Gemini ให้ตอบกลับมาเป็น JSON
             final_res = client.models.generate_content(
-                model='gemini-2.5-flash', 
+                model=GEMINI_GENERATION_MODEL, 
                 contents=[final_prompt],
                 config={"response_mime_type": "application/json"}
             )
