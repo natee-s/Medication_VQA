@@ -27,6 +27,7 @@ from google.genai import types
 import json
 import requests
 import shutil
+import time
 from services.database_service import (
     DEFAULT_LANGUAGE,
     SUPPORTED_LANGUAGES,
@@ -71,6 +72,17 @@ YOLO_LABEL_CLASS_ID = 0
 YOLO_HEADER_CLASS_ID = 1
 _yolo_obb_model = None
 _yolo_obb_model_path = None
+
+
+def is_ai_service_busy_error(error: Exception) -> bool:
+    error_msg = str(error)
+    busy_markers = (
+        "503",
+        "UNAVAILABLE",
+        "high demand",
+        "currently experiencing high demand",
+    )
+    return any(marker.lower() in error_msg.lower() for marker in busy_markers)
 
 
 # ==========================================
@@ -4637,18 +4649,29 @@ def build_liff_label_result_message(user_id: str, source_image_path: str, upload
         with open(safe_file_path, "rb") as image_file:
             image_bytes = image_file.read()
 
-        response = ai_client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[
-                types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
-                OCR_MEDICINE_LABEL_PROMPT,
-                f"{language_instruction} Keep JSON keys exactly as specified; do not translate medicine names.",
-            ],
-            config=types.GenerateContentConfig(
-                temperature=0,
-                response_mime_type="application/json",
-            ),
-        )
+        response = None
+        for attempt in range(2):
+            try:
+                response = ai_client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=[
+                        types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
+                        OCR_MEDICINE_LABEL_PROMPT,
+                        f"{language_instruction} Keep JSON keys exactly as specified; do not translate medicine names.",
+                    ],
+                    config=types.GenerateContentConfig(
+                        temperature=0,
+                        response_mime_type="application/json",
+                    ),
+                )
+                break
+            except Exception as gemini_error:
+                if is_ai_service_busy_error(gemini_error) and attempt == 0:
+                    print(f"LIFF Gemini busy for {upload_id}; retrying once: {gemini_error}")
+                    time.sleep(1)
+                    continue
+                raise
+
         data = parse_ai_json_response(response.text)
 
         if data.get("error") == "rotated":
@@ -4682,6 +4705,9 @@ def build_liff_label_result_message(user_id: str, source_image_path: str, upload
     except json.JSONDecodeError:
         return TextSendMessage(text=t(user_language, "ai_format_error"))
     except Exception as e:
+        if is_ai_service_busy_error(e):
+            print(f"LIFF Gemini busy after retry for {upload_id}: {e}")
+            return TextSendMessage(text=t(user_language, "ai_service_busy_error"))
         print(f"LIFF image processing failed for {upload_id}: {e}")
         return TextSendMessage(text=t(user_language, "image_processing_error"))
     finally:
