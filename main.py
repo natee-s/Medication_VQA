@@ -2582,6 +2582,14 @@ def build_medicine_label_flex_reply(lang: str, display_data: dict, time_payload:
                     "color": "#FFA500",
                     "wrap": True,
                 },
+                {
+                    "type": "text",
+                    "text": f"{t(lang, 'medicine_label_disclaimer')}",
+                    "size": "sm",
+                    "weight": "bold",
+                    "color": "#D32F2F",
+                    "wrap": True,
+                },
             ],
         },
         "footer": {
