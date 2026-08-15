@@ -2458,6 +2458,28 @@ def get_medicine_display_name(medicine_data: dict, lang: str) -> str:
 
 
 LINE_POSTBACK_DATA_MAX_LENGTH = 300
+MEDICINE_CORRECTION_TTL_SECONDS = 10 * 60
+_PENDING_MEDICINE_CORRECTIONS: dict[str, float] = {}
+
+
+def request_medicine_correction(user_id: str) -> None:
+    """Keep the next text message in medication-name correction mode briefly."""
+    if user_id:
+        _PENDING_MEDICINE_CORRECTIONS[user_id] = time.monotonic() + MEDICINE_CORRECTION_TTL_SECONDS
+
+
+def has_pending_medicine_correction(user_id: str) -> bool:
+    expires_at = _PENDING_MEDICINE_CORRECTIONS.get(user_id)
+    if not expires_at:
+        return False
+    if time.monotonic() >= expires_at:
+        _PENDING_MEDICINE_CORRECTIONS.pop(user_id, None)
+        return False
+    return True
+
+
+def clear_pending_medicine_correction(user_id: str) -> None:
+    _PENDING_MEDICINE_CORRECTIONS.pop(user_id, None)
 
 
 def clean_postback_text(value, max_chars: int) -> str:
@@ -2579,6 +2601,16 @@ def build_medicine_label_flex_reply(lang: str, display_data: dict, time_payload:
                         "type": "postback",
                         "label": f"✅ {t(lang, 'acknowledge_button')}",
                         "data": "action=acknowledge",
+                    },
+                },
+                {
+                    "type": "button",
+                    "style": "link",
+                    "height": "sm",
+                    "action": {
+                        "type": "postback",
+                        "label": t(lang, "medicine_correction_button"),
+                        "data": "action=correct_medicine",
                     },
                 },
             ],
@@ -4801,6 +4833,14 @@ def handle_postback(event):
         )
         return
 
+    if data == "action=correct_medicine":
+        request_medicine_correction(user_id)
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=t(user_language, "medicine_correction_prompt")),
+        )
+        return
+
         line_bot_api.reply_message(
             event.reply_token,
             TextSendMessage(text="✅ ระบบรับทราบเรียบร้อยครับ คุณสามารถพิมพ์สอบถามข้อมูลเกี่ยวกับยานี้เพิ่มเติมได้เลยครับ หรือหากต้องการให้อ่านฉลากยาตัวอื่น สามารถส่งรูปมาได้เลยครับ")
@@ -5144,6 +5184,62 @@ def handle_text_message(event):
         line_bot_api.reply_message(event.reply_token, FlexSendMessage(alt_text="ตั้งเวลาแจ้งเตือน", contents=flex_time_picker))
         return # หยุดการทำงานตรงนี้
     # ==========================================
+
+    if has_pending_medicine_correction(user_id):
+        direct_drug_data, direct_drug_keyword = resolve_direct_drug_name_query(user_text)
+        if not direct_drug_data:
+            correction_name = extract_direct_drug_name_candidate(user_text) or t(user_language, "not_specified")
+            print(f"[Medicine Correction] no match for user={user_id} input='{correction_name}'")
+            reply_or_push_message(
+                line_bot_api,
+                user_id,
+                event.reply_token,
+                TextSendMessage(
+                    text=t(
+                        user_language,
+                        "medicine_correction_not_found",
+                        drug=correction_name,
+                    )
+                ),
+            )
+            return
+
+        try:
+            ai_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+            display_data = build_medicine_label_display_data(ai_client, direct_drug_data, user_language)
+            remember_user_medicine_context(user_id, direct_drug_data, display_data, user_language)
+            generic_name = get_medicine_display_name(display_data, user_language)
+            instruction_for_reminder = direct_drug_data.get("instruction_time") or ""
+            time_payload, meal_timing = build_reminder_payload_from_instruction(instruction_for_reminder)
+            print(
+                "[Medicine Correction] resolved medicine label: "
+                f"drug={generic_name} keyword={direct_drug_keyword} "
+                f"reminder_payload={time_payload} meal_timing={meal_timing}"
+            )
+            reply_or_push_message(
+                line_bot_api,
+                user_id,
+                event.reply_token,
+                FlexSendMessage(
+                    alt_text=t(user_language, "medicine_label_alt", drug=generic_name),
+                    contents=build_medicine_label_flex_reply(
+                        user_language,
+                        display_data,
+                        time_payload,
+                        meal_timing,
+                    ),
+                ),
+            )
+            clear_pending_medicine_correction(user_id)
+        except Exception as e:
+            print(f"Medicine correction reply error: {e}")
+            reply_or_push_message(
+                line_bot_api,
+                user_id,
+                event.reply_token,
+                TextSendMessage(text=t(user_language, "generic_processing_error")),
+            )
+        return
 
     direct_drug_data, direct_drug_keyword = resolve_direct_drug_name_query(user_text)
     if direct_drug_data:

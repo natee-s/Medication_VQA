@@ -410,6 +410,10 @@ class MainMedicineLabelFlexLocalizationTests(unittest.TestCase):
         self.assertEqual(reminder_params["drug"], "PROCTASE-P CAPSULES 10 S")
         self.assertEqual(reminder_params["trade"], "PROCTASE-P CAPSULES 10 S")
 
+        correction_action = flex["footer"]["contents"][2]["action"]
+        self.assertEqual(correction_action["data"], "action=correct_medicine")
+        self.assertEqual(correction_action["label"], main.t("th", "medicine_correction_button"))
+
     def test_set_reminder_postback_data_stays_within_line_limit_for_long_trade_names(self):
         import main
 
@@ -481,7 +485,10 @@ class MainMedicineLabelFlexLocalizationTests(unittest.TestCase):
         self.assertIn("药品名称: Paracetamol", body_texts)
         self.assertIn("🎯 适应症: 用于缓解疼痛和退烧", body_texts)
         self.assertIn("⏱️ 用法: 饭后服用", body_texts)
-        self.assertEqual(button_labels, ["⏰ 设置用药提醒", "✅ 知道了"])
+        self.assertEqual(
+            button_labels,
+            ["⏰ 设置用药提醒", "✅ 知道了", "信息与标签不符"],
+        )
         self.assertNotIn("ข้อมูลฉลากยา", header_text)
         self.assertFalse(any("วิธีใช้" in text for text in body_texts))
 
@@ -511,6 +518,19 @@ class MainMedicineLabelFlexLocalizationTests(unittest.TestCase):
 
 
 class MainMedicineFollowupTests(unittest.TestCase):
+    def test_medicine_correction_state_can_be_created_and_cleared(self):
+        import main
+
+        user_id = "U-medicine-correction-test"
+        main.clear_pending_medicine_correction(user_id)
+        self.assertFalse(main.has_pending_medicine_correction(user_id))
+
+        main.request_medicine_correction(user_id)
+        self.assertTrue(main.has_pending_medicine_correction(user_id))
+
+        main.clear_pending_medicine_correction(user_id)
+        self.assertFalse(main.has_pending_medicine_correction(user_id))
+
     def test_direct_drug_name_query_detection_is_conservative(self):
         import main
 
