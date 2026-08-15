@@ -28,6 +28,7 @@ import json
 import requests
 import shutil
 import time
+import threading
 from services.database_service import (
     DEFAULT_LANGUAGE,
     SUPPORTED_LANGUAGES,
@@ -1883,6 +1884,7 @@ PHARMACY_CONTACT = {
 
 
 def reply_or_push_message(line_api, user_id: str, reply_token: str, messages):
+    stop_line_loading_animation(user_id)
     try:
         line_api.reply_message(reply_token, messages)
     except LineBotApiError as e:
@@ -2460,6 +2462,10 @@ def get_medicine_display_name(medicine_data: dict, lang: str) -> str:
 LINE_POSTBACK_DATA_MAX_LENGTH = 300
 MEDICINE_CORRECTION_TTL_SECONDS = 10 * 60
 _PENDING_MEDICINE_CORRECTIONS: dict[str, float] = {}
+LINE_LOADING_SECONDS = 60
+LINE_LOADING_REFRESH_SECONDS = 45
+_LINE_LOADING_REFRESH_TIMERS: dict[str, threading.Timer] = {}
+_LINE_LOADING_REFRESH_LOCK = threading.Lock()
 
 
 def request_medicine_correction(user_id: str) -> None:
@@ -2605,13 +2611,57 @@ def build_medicine_label_flex_reply(lang: str, display_data: dict, time_payload:
                 },
                 {
                     "type": "button",
-                    "style": "link",
+                    "style": "secondary",
+                    "color": "#EEF1F4",
                     "height": "sm",
                     "action": {
                         "type": "postback",
                         "label": t(lang, "medicine_correction_button"),
                         "data": "action=correct_medicine",
                     },
+                },
+            ],
+        },
+    }
+
+
+def build_medicine_correction_prompt_flex(lang: str) -> dict:
+    return {
+        "type": "bubble",
+        "size": "kilo",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#F9AB00",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": f"🔎 {t(lang, 'medicine_correction_title')}",
+                    "weight": "bold",
+                    "size": "lg",
+                    "color": "#FFFFFF",
+                    "wrap": True,
+                }
+            ],
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "md",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": t(lang, "medicine_correction_prompt"),
+                    "size": "md",
+                    "wrap": True,
+                },
+                {"type": "separator"},
+                {
+                    "type": "text",
+                    "text": t(lang, "medicine_correction_hint"),
+                    "size": "sm",
+                    "color": "#666666",
+                    "wrap": True,
                 },
             ],
         },
@@ -4198,17 +4248,8 @@ def _handle_image_impl(event, user_language: str):
     user_id = event.source.user_id
     language_instruction = build_language_instruction(user_language)
 
-    # --- ส่งสถานะ "กำลังพิมพ์..." (Loading Animation) ---
-    url = "https://api.line.me/v2/bot/chat/loading/start"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"
-    }
-    data_loading = {"chatId": user_id, "loadingSeconds": 30}
-    try:
-        requests.post(url, headers=headers, json=data_loading, timeout=5)
-    except Exception as e:
-        print(f"Loading animation skipped for {user_id}: {e}")
+    # Keep the loading indicator visible while OCR, masking, and AI processing run.
+    start_line_loading_animation_with_refresh(user_id)
 
     # --- ดาวน์โหลดรูปภาพจาก LINE ---
     message_content = line_bot_api.get_message_content(event.message.id)
@@ -4520,19 +4561,56 @@ Rules:
 """
 
 
-def start_line_loading_animation(user_id: str):
+def start_line_loading_animation(user_id: str, loading_seconds: int = LINE_LOADING_SECONDS):
+    if not user_id:
+        return
+
+    if loading_seconds not in {5, 10, 20, 30, 40, 50, 60}:
+        loading_seconds = LINE_LOADING_SECONDS
+
     try:
-        requests.post(
+        response = requests.post(
             "https://api.line.me/v2/bot/chat/loading/start",
             headers={
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
             },
-            json={"chatId": user_id, "loadingSeconds": 30},
+            json={"chatId": user_id, "loadingSeconds": loading_seconds},
             timeout=5,
         )
+        if response.status_code != 202:
+            print(f"Loading animation returned status={response.status_code} for {user_id}")
     except Exception as e:
         print(f"Loading animation skipped for {user_id}: {e}")
+
+
+def stop_line_loading_animation(user_id: str):
+    with _LINE_LOADING_REFRESH_LOCK:
+        refresh_timer = _LINE_LOADING_REFRESH_TIMERS.pop(user_id, None)
+    if refresh_timer:
+        refresh_timer.cancel()
+
+
+def _refresh_line_loading_animation(user_id: str):
+    with _LINE_LOADING_REFRESH_LOCK:
+        refresh_timer = _LINE_LOADING_REFRESH_TIMERS.pop(user_id, None)
+    if refresh_timer:
+        start_line_loading_animation(user_id)
+
+
+def start_line_loading_animation_with_refresh(user_id: str):
+    """Start LINE loading and extend it once for slow OCR/AI requests."""
+    stop_line_loading_animation(user_id)
+    start_line_loading_animation(user_id)
+    refresh_timer = threading.Timer(
+        LINE_LOADING_REFRESH_SECONDS,
+        _refresh_line_loading_animation,
+        args=(user_id,),
+    )
+    refresh_timer.daemon = True
+    with _LINE_LOADING_REFRESH_LOCK:
+        _LINE_LOADING_REFRESH_TIMERS[user_id] = refresh_timer
+    refresh_timer.start()
 
 
 def cleanup_temp_paths(paths):
@@ -4783,7 +4861,7 @@ def should_keep_liff_uploaded_files() -> bool:
 def process_liff_uploaded_label_image(line_user_id: str, image_path: str, upload_id: str):
     user_language = get_user_language(line_user_id)
     try:
-        start_line_loading_animation(line_user_id)
+        start_line_loading_animation_with_refresh(line_user_id)
         result_message = build_liff_label_result_message(line_user_id, image_path, upload_id)
         line_bot_api.push_message(line_user_id, result_message)
     except Exception as e:
@@ -4796,6 +4874,7 @@ def process_liff_uploaded_label_image(line_user_id: str, image_path: str, upload
         except Exception as push_error:
             print(f"LIFF fallback push failed for {upload_id}: {push_error}")
     finally:
+        stop_line_loading_animation(line_user_id)
         if not should_keep_liff_uploaded_files():
             metadata_path = str(Path(image_path).with_suffix(".json"))
             cleanup_temp_paths((image_path, metadata_path))
@@ -4837,7 +4916,10 @@ def handle_postback(event):
         request_medicine_correction(user_id)
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text=t(user_language, "medicine_correction_prompt")),
+            FlexSendMessage(
+                alt_text=t(user_language, "medicine_correction_title"),
+                contents=build_medicine_correction_prompt_flex(user_language),
+            ),
         )
         return
 

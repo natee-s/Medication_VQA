@@ -413,6 +413,23 @@ class MainMedicineLabelFlexLocalizationTests(unittest.TestCase):
         correction_action = flex["footer"]["contents"][2]["action"]
         self.assertEqual(correction_action["data"], "action=correct_medicine")
         self.assertEqual(correction_action["label"], main.t("th", "medicine_correction_button"))
+        self.assertEqual(flex["footer"]["contents"][2]["style"], "secondary")
+        self.assertEqual(flex["footer"]["contents"][2]["color"], "#EEF1F4")
+
+    def test_medicine_correction_prompt_flex_is_localized(self):
+        import main
+
+        flex = main.build_medicine_correction_prompt_flex("en")
+
+        self.assertEqual(flex["header"]["backgroundColor"], "#F9AB00")
+        self.assertEqual(
+            flex["header"]["contents"][0]["text"],
+            f"🔎 {main.t('en', 'medicine_correction_title')}",
+        )
+        self.assertEqual(
+            flex["body"]["contents"][0]["text"],
+            main.t("en", "medicine_correction_prompt"),
+        )
 
     def test_set_reminder_postback_data_stays_within_line_limit_for_long_trade_names(self):
         import main
